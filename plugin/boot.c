@@ -8,6 +8,7 @@
 #include <psp2/kernel/clib.h>
 #include <psp2/kernel/modulemgr.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/rtc.h>
 
 #define LAUNCHER_ID    "LNCH00001"
 #define LAUNCHER_URI   "psgm:play?titleid=" LAUNCHER_ID
@@ -16,12 +17,19 @@
 #define LAUNCHER_EBOOT "ux0:app/" LAUNCHER_ID "/eboot.bin"
 #define BACKUP_EBOOT   "ux0:app/" LAUNCHER_ID "/eboot.old"
 #define UPDATE_LOG     "ux0:data/vita-launcher/update.log"
+#define PLAYTIME_LOG   "ux0:data/vita-launcher/playtime.txt" // cumulé par le launcher (src/apps.c)
+#define CHECKPOINT_S   300 // tranche écrite pendant la partie : une coupure de courant en perd au plus autant
+#define MAX_GAP_S      5   // trou plus long entre deux scrutations : la console était en veille, pas compté
 #define SHELL_READY    "NPXS10079" // démarre avec la LiveArea : avant, un lancement fige le boot (méthode d'AutoBoot)
 #define POLL_US        (100 * 1000)
+#define URI_MAX        512
 #define MAX_APPS       16
 
 static volatile int stopping;
 static SceUID thread = -1;
+static char playing[32], key[32]; // key : sous quel ID noter le temps de jeu de `playing`
+static char alias_app[10], alias_key[16]; // ROM demandée par le launcher : son temps compte pour elle, pas pour RetroArch
+static unsigned int played, tick;
 
 // Copie dans app le nom de la première appli en cours hors applis système (NPXS…), "" s'il n'y en a pas.
 // Renvoie 1 si le shell est prêt.
@@ -58,23 +66,45 @@ static void launch(const char *uri) {
 	}
 }
 
+static int alnum(char c) {
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9');
+}
+
 // Appli demandée par le launcher : la lancer d'ici, une fois le launcher fermé, évite la confirmation
 // « fermer l'appli en cours ? » qu'affiche le shell quand une appli en lance une autre.
-static int take_request(char uri[64]) {
-	char id[10];
+// Le fichier contient « TITLEID[&param=…] », puis sur une 2e ligne facultative l'ID sous lequel noter le temps de jeu.
+static int take_request(char uri[URI_MAX]) {
+	char buf[URI_MAX - 18]; // place pour le préfixe psgm:play?titleid=
 	SceUID fd = sceIoOpen(LAUNCH_REQUEST, SCE_O_RDONLY, 0);
 	if (fd < 0)
 		return 0;
-	int n = sceIoRead(fd, id, 9);
+	int n = sceIoRead(fd, buf, sizeof(buf) - 1);
 	sceIoClose(fd);
 	sceIoRemove(LAUNCH_REQUEST);
-	if (n != 9)
+	if (n < 9)
 		return 0;
-	for (int i = 0; i < 9; i++)
-		if (!((id[i] >= 'A' && id[i] <= 'Z') || (id[i] >= 'a' && id[i] <= 'z') || (id[i] >= '0' && id[i] <= '9')))
+	buf[n] = 0;
+	char *alias = sceClibStrchr(buf, '\n');
+	if (alias)
+		*alias++ = 0;
+	if (sceClibStrnlen(buf, 10) < 9 || (buf[9] && buf[9] != '&'))
+		return 0;
+	for (int i = 0; buf[i]; i++)
+		if (i < 9 ? !alnum(buf[i]) : (unsigned char)buf[i] < 0x20)
 			return 0;
-	id[9] = 0;
-	sceClibSnprintf(uri, 64, "psgm:play?titleid=%s", id);
+	alias_key[0] = 0;
+	if (alias) {
+		int i = 0;
+		while (i < (int)sizeof(alias_key) - 1 && alnum(alias[i]))
+			i++;
+		if (alias[i] == 0 || alias[i] == '\n' || alias[i] == '\r') {
+			sceClibMemcpy(alias_key, alias, i);
+			alias_key[i] = 0;
+			sceClibStrncpy(alias_app, buf, 9);
+			alias_app[9] = 0;
+		}
+	}
+	sceClibSnprintf(uri, URI_MAX, "psgm:play?titleid=%s", buf);
 	return 1;
 }
 
@@ -109,8 +139,49 @@ static void apply_update(void) {
 	}
 }
 
+// Heure locale en secondes : le launcher compte les jours avec la même horloge (« joué hier »).
+static unsigned int clock_s(void) {
+	SceDateTime dt;
+	SceUInt64 t = 0;
+	sceRtcGetCurrentClockLocalTime(&dt);
+	sceRtcGetTime64_t(&dt, &t);
+	return (unsigned int)t;
+}
+
+// Ajoute au journal une ligne « ID heure secondes » pour le temps de jeu accumulé (sauf celui du launcher).
+static void log_played(unsigned int now) {
+	char line[64];
+	if (played && sceClibStrcmp(key, LAUNCHER_ID) != 0) {
+		int n = sceClibSnprintf(line, sizeof(line), "%s %u %u\n", key, now, played);
+		SceUID fd = sceIoOpen(PLAYTIME_LOG, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_APPEND, 0666);
+		if (fd >= 0) {
+			sceIoWrite(fd, line, n);
+			sceIoClose(fd);
+		}
+	}
+	played = 0;
+}
+
+// Appelé à chaque scrutation avec l'appli en cours ("" s'il n'y en a pas).
+// shortcut: une appli laissée en arrière-plan (bouton PS) compte comme jouée, à affiner via l'appli au premier plan.
+static void track(const char *app) {
+	unsigned int now = clock_s();
+	if (sceClibStrcmp(app, playing) != 0) {
+		log_played(now);
+		sceClibStrncpy(playing, app, sizeof(playing));
+		// la première appli lancée après une demande est celle demandée (ou aucune si le lancement a échoué)
+		sceClibStrncpy(key, alias_key[0] && sceClibStrcmp(app, alias_app) == 0 ? alias_key : app, sizeof(key));
+		alias_key[0] = 0;
+	} else if (playing[0] && now - tick <= MAX_GAP_S) { // non signé : une horloge reculée n'est pas comptée non plus
+		played += now - tick;
+		if (played >= CHECKPOINT_S)
+			log_played(now);
+	}
+	tick = now;
+}
+
 static int watch(SceSize args, void *argp) {
-	char last[32], now[32], uri[64];
+	char last[32], now[32], uri[URI_MAX];
 	last[0] = 0;
 	while (!stopping && !scan(now))
 		sceKernelDelayThread(100 * 1000);
@@ -135,6 +206,7 @@ static int watch(SceSize args, void *argp) {
 			continue;
 		}
 		scan(now);
+		track(now);
 		if (now[0]) {
 			sceClibStrncpy(last, now, sizeof(last));
 		} else if (last[0]) {

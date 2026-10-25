@@ -21,6 +21,8 @@
 #define ROW_CY     416.0f
 #define TITLE_Y    286
 #define HINTS_Y    528
+#define TABS_Y     112
+#define TAB_COUNT  2
 #define BLUR_SIZE  16
 #define ICONS_PER_FRAME 2
 #define LAUNCH_TIMEOUT 300 // images (5 s) : si le plugin ne ferme pas le launcher, on se ferme nous-mêmes
@@ -65,9 +67,10 @@ static float icon_size(const App *a) {
 	return ICON_BASE + (ICON_FOCUS - ICON_BASE) * a->focus;
 }
 
-static float icon_offset(int index) {
+// Position de l'icône index dans la rangée de l'onglet qui commence à from.
+static float icon_offset(int from, int index) {
 	float x = 0;
-	for (int i = 0; i < index; i++)
+	for (int i = from; i < index; i++)
 		x += icon_size(&apps[i]) + ICON_GAP;
 	return x;
 }
@@ -96,6 +99,61 @@ static void draw_status_bar(void) {
 	vita2d_font_draw_text(font_body, text_x, 52, WHITE(210), 20, buf);
 	draw_battery(text_x - 36, 38, sys.battery, sys.charging, 0.9f);
 	draw_wifi(text_x - 66, 51, sys.wifi, sys.wifi_signal, 0.9f);
+}
+
+// Les applis sont triées par onglet (app_tab) : l'onglet tab occupe apps[lo .. hi[.
+static void tab_range(int tab, int *lo, int *hi) {
+	for (*lo = 0; *lo < app_count && app_tab(&apps[*lo]) < tab; (*lo)++)
+		;
+	for (*hi = *lo; *hi < app_count && app_tab(&apps[*hi]) == tab; (*hi)++)
+		;
+}
+
+static const char *const TAB_NAMES[TAB_COUNT] = {"Jeux", "Applis"};
+
+static float tab_x(int tab) {
+	float x = MARGIN_X + 36; // après la pastille L
+	for (int t = 0; t < tab; t++)
+		x += vita2d_font_text_width(font_title, 26, TAB_NAMES[t]) + 28;
+	return x;
+}
+
+static void draw_trigger(float x, const char *label) {
+	draw_round_rect(x, TABS_Y - 20, 26, 20, 6, WHITE(60));
+	draw_text_center(font_title, x + 13, TABS_Y - 5, WHITE(210), 13, label);
+}
+
+// Onglets en haut à gauche, comme Jeux / Multimédia sur PS5, entre les gâchettes qui les changent.
+static void draw_tabs(int tab) {
+	draw_trigger(MARGIN_X, "L");
+	for (int t = 0; t < TAB_COUNT; t++)
+		vita2d_font_draw_text(font_title, tab_x(t), TABS_Y, WHITE(t == tab ? 255 : 110), 26, TAB_NAMES[t]);
+	draw_trigger(tab_x(TAB_COUNT) - 18, "R");
+}
+
+// « ·  12 h de jeu  ·  joué hier », vide si le plugin n'a jamais vu l'appli tourner.
+static void format_playtime(const App *a, char *buf, size_t size) {
+	buf[0] = 0;
+	if (!a->played)
+		return;
+	SceDateTime dt;
+	SceUInt64 now = 0;
+	sceRtcGetCurrentClockLocalTime(&dt);
+	sceRtcGetTime64_t(&dt, &now); // même horloge que le plugin : heure locale en secondes
+	int days = (int)(now / 86400) - (int)(a->last_played / 86400);
+	char when[32];
+	if (days <= 0)
+		snprintf(when, sizeof(when), "joué aujourd’hui");
+	else if (days == 1)
+		snprintf(when, sizeof(when), "joué hier");
+	else if (days < 60)
+		snprintf(when, sizeof(when), "joué il y a %d jours", days);
+	else
+		snprintf(when, sizeof(when), "joué il y a %d mois", days / 30);
+	if (a->played < 3600)
+		snprintf(buf, size, "  ·  %u min de jeu  ·  %s", a->played < 60 ? 1 : a->played / 60, when);
+	else
+		snprintf(buf, size, "  ·  %u h de jeu  ·  %s", a->played / 3600, when);
 }
 
 // Première lettre ou chiffre ASCII du titre (Inter n'a pas les caractères japonais), sinon celle de l'ID.
@@ -141,7 +199,12 @@ int main(void) {
 		sheet_open(&apps[0]); // aperçu dans Vita3K : tools/preview.sh sheet
 #endif
 
-	int sel = 0, prev_sel = 0;
+	// on revient sur l'onglet de la dernière appli lancée, en général celle qu'on vient de quitter
+	const char *last = apps_last_launched();
+	int last_index = last ? apps_find(last) : -1;
+	int tab = last_index >= 0 ? app_tab(&apps[last_index]) : 0, lo, hi;
+	tab_range(tab, &lo, &hi);
+	int sel = lo, prev_sel = lo;
 	float scroll = 0, fade = 1, text_in = 1;
 	float bg_r = 20, bg_g = 20, bg_b = 26, launch_t = 0;
 	int launching = -1, launch_frames = 0; // appli en cours de lancement par le plugin
@@ -168,29 +231,39 @@ int main(void) {
 				apps_toggle_pin(id);
 				sel = prev_sel = apps_find(id); // l'ordre a changé : on suit l'appli
 			} else if (action == SHEET_UNINSTALL && apps_uninstall(id) == 0) {
-				sel = prev_sel = sel < app_count ? sel : app_count - 1;
-				if (sel < 0)
-					sel = prev_sel = 0;
+				prev_sel = sel; // ramené dans l'onglet plus bas
 				fade = 0;
 				text_in = 0;
 			}
 		} else if (panel_visible()) {
 			panel_update(&in);
 		} else {
-			int target = sel + in.dx, launch_index = -1;
-			if (in.pressed & SCE_CTRL_LTRIGGER)
-				target -= 5;
-			if (in.pressed & SCE_CTRL_RTRIGGER)
-				target += 5;
-			if ((in.pressed & SCE_CTRL_TRIANGLE) || (in.y0 < 70 && in.swipe_y > 60 && in.swipe_y > abs(in.swipe_x))) {
+			int target = sel + in.dx, launch_index = -1, new_tab = tab;
+			if ((in.pressed & SCE_CTRL_LTRIGGER) && tab > 0)
+				new_tab = tab - 1;
+			if ((in.pressed & SCE_CTRL_RTRIGGER) && tab < TAB_COUNT - 1)
+				new_tab = tab + 1;
+			if (in.tap && in.y > TABS_Y - 34 && in.y < TABS_Y + 12) {
+				for (int t = 0; t < TAB_COUNT; t++)
+					if (in.x >= tab_x(t) && in.x <= tab_x(t + 1) - 28)
+						new_tab = t;
+			}
+			if (new_tab != tab) {
+				tab = new_tab;
+				tab_range(tab, &lo, &hi);
+				sel = prev_sel = target = lo;
+				scroll = 0;
+				fade = 0;
+				text_in = 0;
+			} else if ((in.pressed & SCE_CTRL_TRIANGLE) || (in.y0 < 70 && in.swipe_y > 60 && in.swipe_y > abs(in.swipe_x))) {
 				panel_open();
-			} else if ((in.pressed & SCE_CTRL_SQUARE) && app_count > 0) {
+			} else if ((in.pressed & SCE_CTRL_SQUARE) && hi > lo) {
 				sheet_open(&apps[sel]);
 			} else if (abs(in.swipe_x) > 60) {
 				target -= in.swipe_x / 110 ? in.swipe_x / 110 : (in.swipe_x > 0 ? 1 : -1);
 			} else if (in.tap) {
-				for (int i = 0; i < app_count; i++) {
-					float s = icon_size(&apps[i]), x = MARGIN_X + icon_offset(i) - scroll;
+				for (int i = lo; i < hi; i++) {
+					float s = icon_size(&apps[i]), x = MARGIN_X + icon_offset(lo, i) - scroll;
 					if (in.x >= x && in.x <= x + s && in.y >= ROW_CY - s / 2 && in.y <= ROW_CY + s / 2) {
 						if (i == sel)
 							launch_index = i;
@@ -200,8 +273,8 @@ int main(void) {
 					}
 				}
 			}
-			if (app_count > 0) {
-				target = target < 0 ? 0 : target > app_count - 1 ? app_count - 1 : target;
+			if (hi > lo) {
+				target = target < lo ? lo : target > hi - 1 ? hi - 1 : target;
 				if (target != sel) {
 					prev_sel = sel;
 					sel = target;
@@ -215,17 +288,22 @@ int main(void) {
 			}
 		}
 
+		// épingler ou désinstaller réordonne les applis : l'onglet et la sélection suivent
+		tab_range(tab, &lo, &hi);
+		if (sel < lo || sel >= hi)
+			sel = hi > lo && sel >= hi ? hi - 1 : lo;
+
 		// --- animation ---
 		for (int i = 0; i < app_count; i++) {
 			apps[i].focus = approach(apps[i].focus, i == sel ? 1 : 0, 0.22f);
 			if (apps[i].icon)
 				apps[i].appear = approach(apps[i].appear, 1, 0.15f);
 		}
-		scroll = approach(scroll, icon_offset(sel), 0.2f);
+		scroll = approach(scroll, icon_offset(lo, sel), 0.2f);
 		fade = approach(fade, 1, 0.08f);
 		text_in = approach(text_in, 1, 0.15f);
 		launch_t = approach(launch_t, launching >= 0, 0.12f);
-		if (app_count > 0) {
+		if (hi > lo) {
 			App *a = &apps[sel];
 			bg_r = approach(bg_r, a->r * 0.3f, 0.08f);
 			bg_g = approach(bg_g, a->g * 0.3f, 0.08f);
@@ -240,7 +318,7 @@ int main(void) {
 		vita2d_start_drawing();
 		vita2d_clear_screen();
 
-		if (app_count > 0) {
+		if (hi > lo) {
 			if (prev_sel != sel && prev_sel < app_count)
 				draw_blur(&apps[prev_sel], 1 - fade);
 			draw_blur(&apps[sel], fade);
@@ -248,20 +326,27 @@ int main(void) {
 		vita2d_draw_texture_scale(shade_v, 0, 0, SCREEN_W, SCREEN_H / 256.0f);
 		vita2d_draw_texture_scale(shade_h, 0, 0, SCREEN_W * 0.7f / 256.0f, SCREEN_H);
 		draw_status_bar();
+		draw_tabs(tab);
 
-		if (app_count == 0) {
-			vita2d_font_draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, "Aucune appli trouvée");
+		if (hi == lo) {
+			vita2d_font_draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, tab == 0 ? "Aucun jeu" : "Aucune appli");
+			if (tab == 0)
+				vita2d_font_draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20,
+					"ROMs GBA et PS1 : ux0:roms/gba et ux0:roms/ps1, avec RetroArch installé");
 		} else {
 			App *a = &apps[sel];
-			char buf[64];
+			char buf[160], played[64];
 			int slide = (int)((1 - text_in) * 10);
 			draw_text_any(font_title, MARGIN_X, TITLE_Y + slide, WHITE(255 * text_in), 44, a->title);
-			snprintf(buf, sizeof(buf), "%s%s  ·  %s", a->pinned ? "Épinglée  ·  " : "", a->is_game ? "Jeu PS Vita" : "Homebrew", a->id);
+			format_playtime(a, played, sizeof(played));
+			// l'identifiant d'une ROM est le nôtre, sans intérêt à l'écran
+			snprintf(buf, sizeof(buf), "%s%s%s%s%s", a->pinned ? "Épinglée  ·  " : "", apps_kind(a), a->path[0] ? "" : "  ·  ",
+				a->path[0] ? "" : a->id, played);
 			vita2d_font_draw_text(font_body, MARGIN_X, TITLE_Y + 36 + slide, WHITE(170 * text_in), 20, buf);
 
-			for (int i = 0; i < app_count; i++) {
+			for (int i = lo; i < hi; i++) {
 				App *ai = &apps[i];
-				float s = icon_size(ai), x = MARGIN_X + icon_offset(i) - scroll, y = ROW_CY - s / 2;
+				float s = icon_size(ai), x = MARGIN_X + icon_offset(lo, i) - scroll, y = ROW_CY - s / 2;
 				if (x > SCREEN_W || x + s < -ICON_FOCUS)
 					continue;
 				int alpha = (int)(170 + 85 * ai->focus);

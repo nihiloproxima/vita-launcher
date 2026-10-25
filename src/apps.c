@@ -15,13 +15,29 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 #define DATA_DIR    "ux0:data/vita-launcher"
 #define PINNED_FILE DATA_DIR "/pinned.txt"
 #define RECENT_FILE DATA_DIR "/recent.txt"
+#define PLAYTIME_FILE DATA_DIR "/playtime.txt" // écrit par le plugin de démarrage : « ID heure secondes » par tranche
 #define LAUNCH_REQUEST DATA_DIR "/launch.txt" // lu par le plugin de démarrage
 #define TAI_CONFIG  "ur0:tai/config.txt"
 #define BLUR_SIZE   16
+#define ICON_MAX    256 // côté max d'une icône en mémoire : les jaquettes rétro font 512 px et plus
+#define RETROARCH   "RETROVITA"
+
+// Systèmes lancés par RetroArch : cœurs par défaut de RetroFlow, jaquettes de libretro-thumbnails.
+static const struct {
+	Kind kind;
+	char prefix; // première lettre de l'identifiant des ROMs
+	const char *dir, *exts[4], *core, *thumbs;
+} systems[] = {
+	{KIND_GBA, 'g', "ux0:/roms/gba", {"gba", "zip"}, "app0:/gpsp_libretro.self", "Nintendo_-_Game_Boy_Advance"},
+	// shortcut: un jeu multidisque apparaît pour chaque .cue en plus de son .m3u, à filtrer si ça gêne
+	{KIND_PS1, 'p', "ux0:/roms/ps1", {"chd", "cue", "pbp", "m3u"}, "app0:/pcsx_rearmed_libretro.self", "Sony_-_PlayStation"},
+};
+#define SYSTEM_COUNT (int)(sizeof(systems) / sizeof(systems[0]))
 
 App apps[MAX_APPS];
 int app_count;
@@ -83,19 +99,31 @@ static void analyze_icon(App *a) {
 	}
 }
 
-// Les jaquettes sont en portrait (250x320) : on garde le carré central, ce qui retire le bandeau « PS Vita ».
+// Les jaquettes ne sont pas carrées (Vita : 250x320) : on garde le carré central, ce qui retire le bandeau « PS Vita »,
+// réduit à ICON_MAX au plus (moyenne des pixels couverts).
 static vita2d_texture *square_crop(vita2d_texture *t) {
 	unsigned w = vita2d_texture_get_width(t), h = vita2d_texture_get_height(t);
-	if (w == h)
+	unsigned s = w < h ? w : h, d = s < ICON_MAX ? s : ICON_MAX, ox = (w - s) / 2, oy = (h - s) / 2;
+	if (w == h && d == s)
 		return t;
-	unsigned s = w < h ? w : h, ox = (w - s) / 2, oy = (h - s) / 2;
-	vita2d_texture *sq = vita2d_create_empty_texture(s, s);
+	vita2d_texture *sq = vita2d_create_empty_texture(d, d);
 	if (!sq)
 		return t;
 	unsigned src_stride = vita2d_texture_get_stride(t) / 4, dst_stride = vita2d_texture_get_stride(sq) / 4;
 	uint32_t *src = vita2d_texture_get_datap(t), *dst = vita2d_texture_get_datap(sq);
-	for (unsigned y = 0; y < s; y++)
-		memcpy(dst + y * dst_stride, src + (y + oy) * src_stride + ox, s * 4);
+	for (unsigned y = 0; y < d; y++) {
+		for (unsigned x = 0; x < d; x++) {
+			uint32_t sum[4] = {0}, n = 0;
+			for (unsigned sy = y * s / d; sy < (y + 1) * s / d; sy++) {
+				for (unsigned sx = x * s / d; sx < (x + 1) * s / d; sx++, n++) {
+					uint32_t p = src[(sy + oy) * src_stride + sx + ox];
+					for (int c = 0; c < 4; c++)
+						sum[c] += (p >> (8 * c)) & 0xFF;
+				}
+			}
+			dst[y * dst_stride + x] = RGBA8(sum[0] / n, sum[1] / n, sum[2] / n, sum[3] / n);
+		}
+	}
 	vita2d_free_texture(t);
 	return sq;
 }
@@ -113,6 +141,33 @@ static int set_icon(App *a, vita2d_texture *t) {
 	return 1;
 }
 
+static int system_of(const App *a) {
+	for (int s = 0; s < SYSTEM_COUNT; s++)
+		if (systems[s].kind == a->kind)
+			return s;
+	return -1;
+}
+
+// Jaquette : base HexFlow-Covers par title ID, ou libretro-thumbnails par nom de ROM (les caractères &*/:`<>?\|
+// y sont remplacés par _), encodé pour l'URL.
+static void cover_url(const App *a, char *url, int size) {
+	int s = system_of(a);
+	if (s < 0) {
+		snprintf(url, size, "https://raw.githubusercontent.com/Andiweli/HexFlow-Covers/main/Covers/PSVita/%.9s.png", a->id);
+		return;
+	}
+	int n = snprintf(url, size, "https://raw.githubusercontent.com/libretro-thumbnails/%s/master/Named_Boxarts/", systems[s].thumbs);
+	const char *name = strrchr(a->path, '/') + 1, *dot = strrchr(name, '.');
+	for (const char *c = name; c < dot && n < size - 8; c++) {
+		unsigned char ch = strchr("&*/:`<>?\\|", *c) ? '_' : *c;
+		if ((ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || strchr("-._~", ch))
+			url[n++] = ch;
+		else
+			n += snprintf(url + n, size - n, "%%%02X", ch);
+	}
+	snprintf(url + n, size - n, ".png");
+}
+
 static void load_icon(App *a) {
 	char path[256];
 	// ux0:app d'abord : en clair pour les homebrews ; ux0:appmeta et les jeux du commerce sont chiffrés (PFS)
@@ -125,8 +180,11 @@ static void load_icon(App *a) {
 	if (covers_cached(a->id, path, sizeof(path)) && set_icon(a, vita2d_load_PNG_file(path)))
 		return;
 	a->icon_state = ICON_NONE;
-	if (!covers_known_missing(a->id))
-		covers_request(a->id);
+	if (!covers_known_missing(a->id)) {
+		char url[512];
+		cover_url(a, url, sizeof(url));
+		covers_request(a->id, url);
+	}
 }
 
 int apps_load_icons(int budget) {
@@ -158,9 +216,11 @@ static int title_cmp(const char *a, const char *b) {
 	}
 }
 
-// Ordre d'affichage : épinglées (dans l'ordre d'épinglage), récentes (la dernière lancée d'abord), puis par nom.
+// Ordre d'affichage, par onglet : épinglées (dans l'ordre d'épinglage), récentes (la dernière lancée d'abord), puis par nom.
 static int compare_apps(const void *x, const void *y) {
 	const App *a = x, *b = y;
+	if (app_tab(a) != app_tab(b))
+		return app_tab(a) - app_tab(b);
 	int pa = idlist_index(&pinned, a->id), pb = idlist_index(&pinned, b->id);
 	int ra = idlist_index(&recent, a->id), rb = idlist_index(&recent, b->id);
 	int group_a = pa >= 0 ? 0 : ra >= 0 ? 1 : 2, group_b = pb >= 0 ? 0 : rb >= 0 ? 1 : 2;
@@ -171,6 +231,83 @@ static int compare_apps(const void *x, const void *y) {
 	if (group_a == 1)
 		return ra - rb;
 	return title_cmp(a->title, b->title);
+}
+
+// Une ligne tronquée (coupure pendant l'écriture) est ignorée, pas le reste du journal.
+static void load_playtime(void) {
+	FILE *f = fopen(PLAYTIME_FILE, "r");
+	if (!f)
+		return;
+	char line[64], id[16];
+	unsigned int when, secs;
+	while (fgets(line, sizeof(line), f)) {
+		int i = sscanf(line, "%15s %u %u", id, &when, &secs) == 3 ? apps_find(id) : -1;
+		if (i < 0)
+			continue;
+		apps[i].played += secs;
+		if (when > apps[i].last_played)
+			apps[i].last_played = when;
+	}
+	fclose(f);
+}
+
+static int exists(const char *path) {
+	SceIoStat st;
+	return sceIoGetstat(path, &st) >= 0;
+}
+
+// Identifiant d'une ROM : lettre du système et empreinte FNV-1a du nom de fichier, en minuscules comme aucun title ID.
+static void rom_id(char id[16], char prefix, const char *name) {
+	uint32_t h = 2166136261u;
+	for (const unsigned char *c = (const unsigned char *)name; *c; c++)
+		h = (h ^ *c) * 16777619u;
+	snprintf(id, 16, "%c%08lx", prefix, (unsigned long)h);
+}
+
+static int has_ext(const char *name, const char *const exts[4]) {
+	const char *dot = strrchr(name, '.');
+	for (int i = 0; dot && i < 4 && exts[i]; i++)
+		if (strcasecmp(dot + 1, exts[i]) == 0)
+			return 1;
+	return 0;
+}
+
+// shortcut: les ROMs comptent dans MAX_APPS et toutes les icônes restent en mémoire (256 Ko chacune) ;
+// au-delà de quelques centaines de jeux, passer à une bibliothèque qui charge les icônes à la demande.
+static void scan_roms(void) {
+	sceIoMkdir("ux0:/roms", 0777); // créés d'avance : on voit où déposer les ROMs par FTP
+	for (int s = 0; s < SYSTEM_COUNT; s++)
+		sceIoMkdir(systems[s].dir, 0777);
+	if (!exists("ux0:app/" RETROARCH))
+		return;
+	for (int s = 0; s < SYSTEM_COUNT; s++) {
+		SceUID dir = sceIoDopen(systems[s].dir);
+		if (dir < 0)
+			continue;
+		SceIoDirent ent;
+		while (app_count < MAX_APPS && sceIoDread(dir, &ent) > 0) {
+			// RetroArch coupe ses paramètres au « & » : une ROM qui en contient ne se lancerait pas
+			if (SCE_S_ISDIR(ent.d_stat.st_mode) || !has_ext(ent.d_name, systems[s].exts) || strchr(ent.d_name, '&'))
+				continue;
+			App *a = &apps[app_count];
+			memset(a, 0, sizeof(*a));
+			if (snprintf(a->path, sizeof(a->path), "%s/%s", systems[s].dir, ent.d_name) >= (int)sizeof(a->path))
+				continue;
+			rom_id(a->id, systems[s].prefix, ent.d_name);
+			// titre : le nom sans extension ni étiquettes No-Intro, « (USA, Europe) » ou « [!] »
+			snprintf(a->title, sizeof(a->title), "%.*s", (int)(strrchr(ent.d_name, '.') - ent.d_name), ent.d_name);
+			char *end = strpbrk(a->title, "([");
+			if (end > a->title)
+				*end = 0;
+			for (end = a->title + strlen(a->title); end > a->title && end[-1] == ' ';)
+				*--end = 0;
+			a->kind = systems[s].kind;
+			a->pinned = idlist_index(&pinned, a->id) >= 0;
+			a->r = 60; a->g = 60; a->b = 72;
+			app_count++;
+		}
+		sceIoDclose(dir);
+	}
 }
 
 void apps_scan(void) {
@@ -192,13 +329,30 @@ void apps_scan(void) {
 		if (read_sfo_string(path, "TITLE", a->title, sizeof(a->title)) < 0)
 			continue; // dossier vide ou cassé : pas une appli lançable
 		read_sfo_string(path, "APP_VER", a->version, sizeof(a->version));
-		a->is_game = strncmp(a->id, "PCS", 3) == 0;
+		// data/boot.bin : bulle d'Adrenaline Bubble Manager, qui ouvre un jeu PSP (ou PS1) dans Adrenaline
+		// shortcut: une bulle PS1 est aussi présentée comme « Jeu PSP », lire le chemin du jeu dans boot.bin si ça gêne
+		snprintf(path, sizeof(path), "ux0:app/%s/data/boot.bin", a->id);
+		a->kind = exists(path) ? KIND_PSP : strncmp(a->id, "PCS", 3) == 0 ? KIND_VITA : KIND_APP;
 		a->pinned = idlist_index(&pinned, a->id) >= 0;
 		a->r = 60; a->g = 60; a->b = 72;
 		app_count++;
 	}
 	sceIoDclose(dir);
+	scan_roms();
+	load_playtime();
 	qsort(apps, app_count, sizeof(App), compare_apps);
+}
+
+const char *apps_kind(const App *a) {
+	static const char *const labels[] = {
+		[KIND_APP] = "Homebrew", [KIND_VITA] = "Jeu PS Vita", [KIND_PSP] = "Jeu PSP",
+		[KIND_GBA] = "Game Boy Advance", [KIND_PS1] = "PlayStation",
+	};
+	return labels[a->kind];
+}
+
+const char *apps_last_launched(void) {
+	return recent.count ? recent.ids[0] : NULL;
 }
 
 int apps_find(const char *id) {
@@ -223,29 +377,39 @@ int apps_boot_plugin(void) {
 
 // Avec le plugin, c'est le shell qui ferme le launcher puis lance l'appli : pas de confirmation
 // « fermer l'appli en cours ? » affichée par-dessus l'accueil Sony. Renvoie 0 sans plugin.
-static int request_launch(const char *id) {
+// target : « TITLEID[&param=…] » ; key : ID sous lequel le plugin note le temps de jeu, s'il diffère du title ID.
+static int request_launch(const char *target, const char *key) {
 	if (!apps_boot_plugin())
 		return 0;
 	FILE *f = fopen(LAUNCH_REQUEST, "w");
 	if (!f)
 		return 0;
-	fputs(id, f);
+	fputs(target, f);
+	if (key)
+		fprintf(f, "\n%s", key);
 	fclose(f);
 	return 1;
 }
 
 int apps_reload(void) {
-	return request_launch(SELF_TITLEID);
+	return request_launch(SELF_TITLEID, NULL);
 }
 
 int apps_launch(const App *a) {
 	idlist_push_front(&recent, a->id);
 	idlist_save(&recent, RECENT_FILE);
-	if (request_launch(a->id))
+	// une ROM s'ouvre dans RetroArch avec son cœur (paramètres lus par RetroArch, frontend/drivers/platform_psp.c)
+	char target[384];
+	int s = system_of(a);
+	if (s >= 0)
+		snprintf(target, sizeof(target), RETROARCH "&param=%s&param2=%s", systems[s].core, a->path);
+	else
+		snprintf(target, sizeof(target), "%s", a->id);
+	if (request_launch(target, s >= 0 ? a->id : NULL))
 		return 1;
 	// Sans plugin, même séquence que VitaShell : le double appel évite un échec quand le shell n'est pas prêt.
-	char uri[64];
-	snprintf(uri, sizeof(uri), "psgm:play?titleid=%s", a->id);
+	char uri[416];
+	snprintf(uri, sizeof(uri), "psgm:play?titleid=%s", target);
 	sceKernelDelayThread(10000);
 	sceAppMgrLaunchAppByUri(0xFFFFF, uri);
 	sceKernelDelayThread(10000);

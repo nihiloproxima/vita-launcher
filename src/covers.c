@@ -8,11 +8,11 @@
 #include <string.h>
 
 #define COVERS_DIR "ux0:data/vita-launcher/covers"
-#define COVERS_URL "https://raw.githubusercontent.com/Andiweli/HexFlow-Covers/main/Covers/PSVita/%s.png"
 #define QUEUE 128
+#define URL_MAX 512
 
 // Deux files à un seul écrivain chacune : demandes (thread principal -> téléchargement) et arrivées (l'inverse).
-static char requests[QUEUE][16], arrivals[QUEUE][16];
+static char requests[QUEUE][16], urls[QUEUE][URL_MAX], arrivals[QUEUE][16];
 static int req_head, req_tail, arr_head, arr_tail;
 static SceUID pending;
 
@@ -36,9 +36,8 @@ int covers_known_missing(const char *id) {
 	return exists(path);
 }
 
-static int download(const char *id) {
-	char url[160], path[96], part[104];
-	snprintf(url, sizeof(url), COVERS_URL, id);
+static int download(const char *id, const char *url) {
+	char path[96], part[104];
 	cover_file(id, "png", path, sizeof(path));
 	snprintf(part, sizeof(part), "%s.part", path);
 	FILE *f = fopen(part, "wb");
@@ -74,10 +73,11 @@ static int worker(SceSize args, void *argp) {
 	curl_global_init(CURL_GLOBAL_ALL);
 	while (sceKernelWaitSema(pending, 1, NULL) >= 0) {
 		int head = __atomic_load_n(&req_head, __ATOMIC_RELAXED);
-		char id[16];
+		char id[16], url[URL_MAX];
 		memcpy(id, requests[head % QUEUE], sizeof(id));
+		memcpy(url, urls[head % QUEUE], sizeof(url));
 		__atomic_store_n(&req_head, head + 1, __ATOMIC_RELEASE);
-		if (download(id)) {
+		if (download(id, url)) {
 			int tail = __atomic_load_n(&arr_tail, __ATOMIC_RELAXED);
 			if (tail - __atomic_load_n(&arr_head, __ATOMIC_ACQUIRE) < QUEUE) {
 				memcpy(arrivals[tail % QUEUE], id, sizeof(id));
@@ -98,11 +98,12 @@ void covers_init(void) {
 		sceKernelStartThread(thread, 0, NULL);
 }
 
-void covers_request(const char *id) {
+void covers_request(const char *id, const char *url) {
 	int tail = __atomic_load_n(&req_tail, __ATOMIC_RELAXED);
 	if (pending < 0 || tail - __atomic_load_n(&req_head, __ATOMIC_ACQUIRE) >= QUEUE)
 		return;
 	snprintf(requests[tail % QUEUE], sizeof(requests[0]), "%s", id);
+	snprintf(urls[tail % QUEUE], sizeof(urls[0]), "%s", url);
 	__atomic_store_n(&req_tail, tail + 1, __ATOMIC_RELEASE);
 	sceKernelSignalSema(pending, 1);
 }

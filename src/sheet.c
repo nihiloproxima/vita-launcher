@@ -10,11 +10,13 @@
 #define ICON   96
 #define ROW_H  52
 #define ROWS_Y 150
-#define ROW_COUNT 3
 
 static App app; // copie : l'ordre des applis peut changer et une icône être libérée après une action
 static int open, row, confirm;
 static float t;
+
+// Une ROM n'a pas « Désinstaller » : ce serait supprimer le fichier, et un jeu PS1 a souvent plusieurs fichiers.
+static int row_count(void) { return app.path[0] ? 2 : 3; }
 
 static float card_x(void) { return (SCREEN_W - CARD_W) / 2.0f; }
 static float card_y(void) { return (SCREEN_H - CARD_H) / 2.0f + 24 * (1 - ease_out(t)); }
@@ -57,7 +59,7 @@ SheetAction sheet_update(const Input *in) {
 		return SHEET_NONE;
 	}
 	if (in->dy) {
-		row = row + in->dy < 0 ? 0 : row + in->dy >= ROW_COUNT ? ROW_COUNT - 1 : row + in->dy;
+		row = row + in->dy < 0 ? 0 : row + in->dy >= row_count() ? row_count() - 1 : row + in->dy;
 		confirm = 0;
 	}
 	if (in->pressed & SCE_CTRL_CROSS)
@@ -69,7 +71,7 @@ SheetAction sheet_update(const Input *in) {
 			return SHEET_NONE;
 		}
 		int i = (int)((in->y - y - ROWS_Y) / ROW_H);
-		if (in->y >= y + ROWS_Y && i >= 0 && i < ROW_COUNT) {
+		if (in->y >= y + ROWS_Y && i >= 0 && i < row_count()) {
 			if (i != row)
 				confirm = 0;
 			row = i;
@@ -92,11 +94,13 @@ void sheet_draw(void) {
 	}
 	draw_text_any(font_title, x + 144, y + 70, WHITE(255 * a), 26, app.title);
 	char buf[96];
-	snprintf(buf, sizeof(buf), "%s  ·  %s%s%s", app.is_game ? "Jeu PS Vita" : "Homebrew", app.id,
-		app.version[0] ? "  ·  v" : "", app.version);
+	if (app.path[0])
+		snprintf(buf, sizeof(buf), "%s", apps_kind(&app));
+	else
+		snprintf(buf, sizeof(buf), "%s  ·  %s%s%s", apps_kind(&app), app.id, app.version[0] ? "  ·  v" : "", app.version);
 	vita2d_font_draw_text(font_body, x + 144, y + 100, WHITE(160 * a), 17, buf);
 
-	for (int i = 0; i < ROW_COUNT; i++) {
+	for (int i = 0; i < row_count(); i++) {
 		float ry = y + ROWS_Y + i * ROW_H;
 		int focused = i == row, danger = i == 2;
 		unsigned int fg = danger ? RGBA8(255, 110, 100, (int)(255 * a)) : WHITE(230 * a);
