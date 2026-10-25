@@ -14,13 +14,14 @@ Un launcher pour PS Vita modifiée, inspiré de l'écran d'accueil de la PS5.
 - **Fiche d'appli** (▢) : version et identifiant, lancer, épingler en tête, désinstaller (avec confirmation).
 - **Panneau rapide** (△ ou glisser depuis le haut de l'écran) : heure et date, Wi-Fi, batterie et autonomie, volume, raccourcis vers les Paramètres et le Wi-Fi, veille, redémarrage et extinction (avec confirmation).
 - **Commandes** : croix ou joystick gauche pour naviguer, L/R pour sauter de 5, ✕ pour lancer, aides affichées en bas de l'écran. Au tactile : toucher pour sélectionner, toucher à nouveau pour lancer, glisser pour défiler.
+- **Interface principale** (plugin optionnel `launcher_boot.suprx`) : le launcher démarre avec la console et revient tout seul quand on quitte un jeu ou une appli. Si on ferme le launcher lui-même, on reste sur l'accueil Sony.
 - Les icônes se chargent progressivement, le démarrage reste rapide même avec beaucoup d'applis. Les titres japonais, chinois ou coréens utilisent la police système de la Vita.
 
 Réglages enregistrés dans `ux0:data/vita-launcher/` (épinglées, récentes, cache des jaquettes).
 
 ## État
 
-En développement. Tourne sur une vraie PS Vita (PCH-2000, 3.60 HENkaku) : affichage, icônes et jaquettes validés. Le lancement des applis, le volume, l'alimentation, la désinstallation et la police japonaise restent à valider sur le matériel.
+En développement. Tourne sur une vraie PS Vita (PCH-2000, 3.60 HENkaku) : affichage, icônes, jaquettes, lancement des applis et plugin de démarrage validés. Le volume, l'alimentation, la désinstallation et la police japonaise restent à valider sur le matériel.
 
 ## Prérequis
 
@@ -35,6 +36,17 @@ cmake -S . -B build && cmake --build build
 ```
 
 Le paquet à installer avec VitaShell est `build/launcher.vpk`.
+
+## En faire l'interface principale
+
+Copier `build/launcher_boot.suprx` dans `ur0:tai/`, puis ajouter cette ligne sous `*main` dans `ur0:tai/config.txt` (garder une copie de l'ancien fichier) et redémarrer :
+
+```
+*main
+ur0:tai/launcher_boot.suprx
+```
+
+Le plugin attend que l'accueil soit prêt (même méthode qu'[AutoBoot](https://github.com/Rinnegatamante/AutoBoot)), lance le launcher, puis le relance chaque fois qu'une autre appli se ferme. En cas de souci au démarrage : éteindre, rallumer en maintenant L jusqu'à l'accueil (les plugins ne se chargent pas), puis retirer la ligne.
 
 ## Aperçu sur Mac avec Vita3K
 
@@ -58,7 +70,7 @@ cc test/test_idlist.c src/idlist.c -o build/test_idlist && build/test_idlist
 
 - Jeux PSP et PS1 (via Adrenaline)
 - Boutique : catalogue VitaDB, installation et mises à jour
-- Plugin pour revenir au launcher en quittant un jeu, lancement au démarrage
+- Bouton PS qui ramène au launcher plutôt qu'à l'accueil Sony
 
 ## Licence
 
