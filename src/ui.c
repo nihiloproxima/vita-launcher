@@ -5,10 +5,12 @@
 #define CORNER_SEGMENTS 6
 
 vita2d_font *font_title, *font_body;
+vita2d_pgf *font_cjk;
 
 int ui_init(void) {
 	font_title = vita2d_load_font_file("app0:fonts/Inter-SemiBold.ttf");
 	font_body = vita2d_load_font_file("app0:fonts/Inter-Regular.ttf");
+	font_cjk = vita2d_load_default_pgf();
 	return font_title && font_body ? 0 : -1;
 }
 
@@ -69,4 +71,63 @@ void draw_battery(float x, float y, int percent, int charging, float alpha) {
 	unsigned int fill = percent <= 15 ? RGBA8(255, 95, 85, (int)(255 * alpha))
 		: charging ? RGBA8(110, 220, 130, (int)(255 * alpha)) : WHITE(235 * alpha);
 	vita2d_draw_rectangle(x + 3, y + 3, 17 * (percent < 0 ? 0 : percent > 100 ? 100 : percent) / 100.0f, 6, fill);
+}
+
+// Octet de tête UTF-8 >= 0xE3 : caractères à partir de U+3000 (kana, idéogrammes, hangul, pleine chasse).
+static int has_cjk(const char *text) {
+	for (const unsigned char *c = (const unsigned char *)text; *c; c++)
+		if (*c >= 0xE3 && *c <= 0xEF)
+			return 1;
+	return 0;
+}
+
+void draw_text_any(vita2d_font *font, float x, float y, unsigned int color, unsigned int size, const char *text) {
+	if (font_cjk && has_cjk(text))
+		vita2d_pgf_draw_text(font_cjk, (int)x, (int)y, color, size / 18.0f, text);
+	else
+		vita2d_font_draw_text(font, (int)x, (int)y, color, size, text);
+}
+
+static void draw_line(float x0, float y0, float x1, float y1, float width, unsigned int color) {
+	float dx = x1 - x0, dy = y1 - y0, len = sqrtf(dx * dx + dy * dy);
+	float nx = -dy / len * width / 2, ny = dx / len * width / 2;
+	vita2d_color_vertex *v = vita2d_pool_memalign(4 * sizeof(vita2d_color_vertex), sizeof(vita2d_color_vertex));
+	v[0] = (vita2d_color_vertex){x0 + nx, y0 + ny, 0.5f, color};
+	v[1] = (vita2d_color_vertex){x0 - nx, y0 - ny, 0.5f, color};
+	v[2] = (vita2d_color_vertex){x1 + nx, y1 + ny, 0.5f, color};
+	v[3] = (vita2d_color_vertex){x1 - nx, y1 - ny, 0.5f, color};
+	vita2d_draw_array(SCE_GXM_PRIMITIVE_TRIANGLE_STRIP, v, 4);
+}
+
+void draw_glyph(Glyph glyph, float cx, float cy, float alpha) {
+	unsigned int ink = RGBA8(26, 26, 32, (int)(255 * alpha));
+	vita2d_draw_fill_circle(cx, cy, 10, WHITE(235 * alpha));
+	switch (glyph) {
+	case GLYPH_CROSS:
+		draw_line(cx - 4, cy - 4, cx + 4, cy + 4, 2, ink);
+		draw_line(cx - 4, cy + 4, cx + 4, cy - 4, 2, ink);
+		break;
+	case GLYPH_CIRCLE:
+		vita2d_draw_fill_circle(cx, cy, 5, ink);
+		vita2d_draw_fill_circle(cx, cy, 3.2f, WHITE(235 * alpha));
+		break;
+	case GLYPH_SQUARE:
+		draw_line(cx - 4, cy - 4.9f, cx - 4, cy + 4.9f, 1.8f, ink);
+		draw_line(cx + 4, cy - 4.9f, cx + 4, cy + 4.9f, 1.8f, ink);
+		draw_line(cx - 4.9f, cy - 4, cx + 4.9f, cy - 4, 1.8f, ink);
+		draw_line(cx - 4.9f, cy + 4, cx + 4.9f, cy + 4, 1.8f, ink);
+		break;
+	case GLYPH_TRIANGLE:
+		draw_line(cx, cy - 5, cx + 5, cy + 3.8f, 1.8f, ink);
+		draw_line(cx + 5, cy + 3.8f, cx - 5, cy + 3.8f, 1.8f, ink);
+		draw_line(cx - 5, cy + 3.8f, cx, cy - 5, 1.8f, ink);
+		break;
+	}
+}
+
+float draw_hint(Glyph glyph, const char *label, float right, float baseline, float alpha) {
+	float text_x = right - vita2d_font_text_width(font_body, 17, label);
+	vita2d_font_draw_text(font_body, (int)text_x, (int)baseline, WHITE(210 * alpha), 17, label);
+	draw_glyph(glyph, text_x - 18, baseline - 6, alpha);
+	return text_x - 30;
 }

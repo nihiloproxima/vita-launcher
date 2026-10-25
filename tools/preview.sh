@@ -1,11 +1,11 @@
 #!/bin/bash
 # Compile, lance le launcher dans Vita3K avec les applis de preview/ux0, puis capture l'écran dans build-preview/shot.png.
-# usage : tools/preview.sh [panel] [secondes avant capture, défaut 5]   (panel : démarre panneau rapide ouvert)
+# usage : tools/preview.sh [panel|sheet] [secondes avant capture, défaut 5]   (démarre avec le panneau rapide ou la fiche ouverte)
 set -e
 cd "$(dirname "$0")/.."
 export VITASDK=${VITASDK:-$HOME/vitasdk} PATH=$HOME/vitasdk/bin:$PATH
 DEFS=""
-if [ "$1" = panel ]; then DEFS="-DPREVIEW_PANEL"; shift; fi
+case "$1" in panel) DEFS="-DPREVIEW_PANEL"; shift ;; sheet) DEFS="-DPREVIEW_SHEET"; shift ;; esac
 cmake -S . -B build-preview -DCMAKE_C_FLAGS="$DEFS" >/dev/null && cmake --build build-preview >/dev/null
 FS="$HOME/Library/Application Support/Vita3K/Vita3K/fs/ux0"
 mkdir -p "$FS" && rsync -a preview/ux0/ "$FS/"
