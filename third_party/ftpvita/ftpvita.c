@@ -14,6 +14,7 @@
 
 #include <psp2/io/fcntl.h>
 #include <psp2/io/dirent.h>
+#include <psp2/io/stat.h> /* vita-launcher : sceIoGetstat/Mkdir/Rmdir ont changé d'en-tête dans le VitaSDK récent */
 
 #include <psp2/net/net.h>
 #include <psp2/net/netctl.h>

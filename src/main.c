@@ -4,6 +4,7 @@
 #include <vita2d.h>
 #include "apps.h"
 #include "covers.h"
+#include "ftp.h"
 #include "input.h"
 #include "panel.h"
 #include "sheet.h"
@@ -85,6 +86,11 @@ static void draw_status_bar(void) {
 	char buf[32];
 	snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
 	vita2d_font_draw_text(font_title, MARGIN_X, 52, WHITE(230), 22, buf);
+	if (ftp_running()) {
+		float x = MARGIN_X + vita2d_font_text_width(font_title, 22, buf) + 20;
+		vita2d_draw_fill_circle(x + 4, 45, 4, RGBA8(90, 210, 120, 255));
+		vita2d_font_draw_text(font_body, x + 16, 52, WHITE(190), 18, ftp_address());
+	}
 	snprintf(buf, sizeof(buf), "%d %%", sys.battery);
 	float right = SCREEN_W - MARGIN_X, text_x = right - vita2d_font_text_width(font_body, 20, buf);
 	vita2d_font_draw_text(font_body, text_x, 52, WHITE(210), 20, buf);
@@ -119,6 +125,7 @@ int main(void) {
 	if (ui_init() < 0)
 		sceKernelExitProcess(0);
 	sys_init();
+	ftp_init();
 	covers_init();
 	vita2d_texture *shade_v = make_gradient(1, 50, 245);
 	vita2d_texture *shade_h = make_gradient(0, 150, 0);
@@ -143,6 +150,7 @@ int main(void) {
 	while (1) {
 		input_read(&in);
 		sys_poll();
+		ftp_poll(sys.wifi);
 		apps_load_icons(ICONS_PER_FRAME);
 
 		// --- entrées : la fiche puis le panneau ont la main tant qu'ils sont visibles ---

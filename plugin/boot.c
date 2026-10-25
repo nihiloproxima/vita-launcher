@@ -12,6 +12,10 @@
 #define LAUNCHER_ID    "LNCH00001"
 #define LAUNCHER_URI   "psgm:play?titleid=" LAUNCHER_ID
 #define LAUNCH_REQUEST "ux0:data/vita-launcher/launch.txt"
+#define UPDATE_FILE    "ux0:data/vita-launcher/eboot.new" // déposé par tools/deploy.sh
+#define LAUNCHER_EBOOT "ux0:app/" LAUNCHER_ID "/eboot.bin"
+#define BACKUP_EBOOT   "ux0:app/" LAUNCHER_ID "/eboot.old"
+#define UPDATE_LOG     "ux0:data/vita-launcher/update.log"
 #define SHELL_READY    "NPXS10079" // démarre avec la LiveArea : avant, un lancement fige le boot (méthode d'AutoBoot)
 #define POLL_US        (100 * 1000)
 #define MAX_APPS       16
@@ -74,6 +78,37 @@ static int take_request(char uri[64]) {
 	return 1;
 }
 
+// Le dossier du launcher est verrouillé tant qu'il tourne, et encore un instant après sa fermeture : une mise à jour
+// déposée par FTP est mise en place ici, avec quelques essais. L'ancien eboot est remis si le remplacement échoue.
+// Le résultat est noté dans UPDATE_LOG, que tools/deploy.sh affiche en cas d'échec.
+static void apply_update(void) {
+	char magic[4], line[96];
+	SceUID fd = sceIoOpen(UPDATE_FILE, SCE_O_RDONLY, 0);
+	if (fd < 0)
+		return;
+	int n = sceIoRead(fd, magic, 4), old = -1, ret = -1, tries = 0;
+	sceIoClose(fd);
+	if (n == 4 && sceClibMemcmp(magic, "SCE\0", 4) == 0) {
+		sceIoRemove(BACKUP_EBOOT);
+		for (; tries < 30 && (old = sceIoRename(LAUNCHER_EBOOT, BACKUP_EBOOT)) < 0; tries++)
+			sceKernelDelayThread(100 * 1000);
+		if (old >= 0) {
+			ret = sceIoRename(UPDATE_FILE, LAUNCHER_EBOOT);
+			if (ret < 0)
+				sceIoRename(BACKUP_EBOOT, LAUNCHER_EBOOT);
+			else
+				sceIoRemove(BACKUP_EBOOT);
+		}
+	}
+	sceIoRemove(UPDATE_FILE); // pas un SELF, ou échec : on ne garde pas un fichier qui serait réessayé à chaque fois
+	n = sceClibSnprintf(line, sizeof(line), "magic %d, ancien eboot 0x%08x apres %d essais, nouveau 0x%08x\n", n, old, tries, ret);
+	fd = sceIoOpen(UPDATE_LOG, SCE_O_WRONLY | SCE_O_CREAT | SCE_O_TRUNC, 0666);
+	if (fd >= 0) {
+		sceIoWrite(fd, line, n);
+		sceIoClose(fd);
+	}
+}
+
 static int watch(SceSize args, void *argp) {
 	char last[32], now[32], uri[64];
 	last[0] = 0;
@@ -93,6 +128,8 @@ static int watch(SceSize args, void *argp) {
 					break;
 				sceKernelDelayThread(50 * 1000);
 			}
+			if (sceClibStrcmp(uri, LAUNCHER_URI) == 0)
+				apply_update();
 			launch(uri);
 			last[0] = 0;
 			continue;

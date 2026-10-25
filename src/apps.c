@@ -210,7 +210,7 @@ int apps_find(const char *id) {
 
 // Le plugin de démarrage (plugin/boot.c) est-il dans la config taiHEN ?
 // shortcut: une ligne commentée compte aussi, à affiner si ça gêne quelqu'un.
-static int boot_plugin_configured(void) {
+int apps_boot_plugin(void) {
 	static char buf[8192];
 	FILE *f = fopen(TAI_CONFIG, "r");
 	if (!f)
@@ -221,19 +221,28 @@ static int boot_plugin_configured(void) {
 	return strstr(buf, "launcher_boot.suprx") != NULL;
 }
 
+// Avec le plugin, c'est le shell qui ferme le launcher puis lance l'appli : pas de confirmation
+// « fermer l'appli en cours ? » affichée par-dessus l'accueil Sony. Renvoie 0 sans plugin.
+static int request_launch(const char *id) {
+	if (!apps_boot_plugin())
+		return 0;
+	FILE *f = fopen(LAUNCH_REQUEST, "w");
+	if (!f)
+		return 0;
+	fputs(id, f);
+	fclose(f);
+	return 1;
+}
+
+int apps_reload(void) {
+	return request_launch(SELF_TITLEID);
+}
+
 int apps_launch(const App *a) {
 	idlist_push_front(&recent, a->id);
 	idlist_save(&recent, RECENT_FILE);
-	// Avec le plugin, c'est le shell qui ferme le launcher puis lance l'appli : pas de confirmation
-	// « fermer l'appli en cours ? » affichée par-dessus l'accueil Sony.
-	if (boot_plugin_configured()) {
-		FILE *f = fopen(LAUNCH_REQUEST, "w");
-		if (f) {
-			fputs(a->id, f);
-			fclose(f);
-			return 1;
-		}
-	}
+	if (request_launch(a->id))
+		return 1;
 	// Sans plugin, même séquence que VitaShell : le double appel évite un échec quand le shell n'est pas prêt.
 	char uri[64];
 	snprintf(uri, sizeof(uri), "psgm:play?titleid=%s", a->id);

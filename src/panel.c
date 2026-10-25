@@ -1,5 +1,6 @@
 #include "panel.h"
 
+#include "ftp.h"
 #include "sys.h"
 #include "ui.h"
 
@@ -16,11 +17,11 @@
 #define TILES_Y   204
 #define TILE_H    64
 #define TILE_GAP  12
-#define TILE_COUNT 5
+#define TILE_COUNT 6
 #define CONFIRM_FRAMES 180
 
-enum { TILE_WIFI, TILE_SETTINGS, TILE_SUSPEND, TILE_REBOOT, TILE_POWEROFF };
-static const char *tile_labels[TILE_COUNT] = {"Wi-Fi", "Paramètres", "Veille", "Redémarrer", "Éteindre"};
+enum { TILE_WIFI, TILE_SETTINGS, TILE_FTP, TILE_SUSPEND, TILE_REBOOT, TILE_POWEROFF };
+static const char *tile_labels[TILE_COUNT] = {"Wi-Fi", "Paramètres", "FTP", "Veille", "Redémarrer", "Éteindre"};
 static const char *days[] = {"dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"};
 static const char *months[] = {"janvier", "février", "mars", "avril", "mai", "juin", "juillet",
 	"août", "septembre", "octobre", "novembre", "décembre"};
@@ -54,6 +55,9 @@ static void activate(int tile) {
 		break;
 	case TILE_SETTINGS:
 		sys_open_settings("");
+		break;
+	case TILE_FTP:
+		ftp_toggle();
 		break;
 	case TILE_SUSPEND:
 		sys_suspend();
@@ -181,7 +185,15 @@ static void draw_tiles(float py) {
 			fg = RGBA8(18, 18, 24, 255);
 		}
 		draw_round_rect(x, y, w, TILE_H, 16, bg);
-		draw_text_center(font_title, x + w / 2, y + TILE_H / 2 + 6, fg, 17, confirm == i ? "Confirmer ?" : tile_labels[i]);
+		if (i == TILE_FTP && ftp_enabled() && confirm != i) {
+			// pastille verte quand le serveur tourne, orange tant qu'il attend le Wi-Fi
+			const char *label = ftp_running() ? "FTP activé" : "FTP…";
+			float left = x + (w - vita2d_font_text_width(font_title, 17, label) - 14) / 2;
+			vita2d_draw_fill_circle(left + 4, y + TILE_H / 2, 4, ftp_running() ? RGBA8(90, 210, 120, 255) : RGBA8(240, 170, 60, 255));
+			vita2d_font_draw_text(font_title, (int)(left + 14), (int)(y + TILE_H / 2 + 6), fg, 17, label);
+		} else {
+			draw_text_center(font_title, x + w / 2, y + TILE_H / 2 + 6, fg, 17, confirm == i ? "Confirmer ?" : tile_labels[i]);
+		}
 	}
 }
 

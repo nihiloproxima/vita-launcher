@@ -20,8 +20,12 @@ set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
 
 add_executable(${PROJECT_NAME}
   src/main.c src/apps.c src/covers.c src/idlist.c src/input.c src/panel.c
-  src/sfo.c src/sheet.c src/sys.c src/ui.c
+  src/sfo.c src/sheet.c src/sys.c src/ui.c src/ftp.c
+  third_party/ftpvita/ftpvita.c
 )
+target_include_directories(${PROJECT_NAME} PRIVATE third_party/ftpvita)
+# code tiers : avertissements snprintf sans conséquence (troncature voulue)
+set_source_files_properties(third_party/ftpvita/ftpvita.c PROPERTIES COMPILE_OPTIONS -Wno-format-truncation)
 target_compile_definitions(${PROJECT_NAME} PRIVATE SELF_TITLEID="${VITA_TITLEID}")
 
 target_link_libraries(${PROJECT_NAME}

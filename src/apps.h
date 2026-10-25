@@ -30,5 +30,7 @@ int apps_find(const char *id);   // index, ou -1
 // Mémorise dans les récentes puis lance. Avec le plugin de démarrage, renvoie 1 : le launcher affiche
 // son animation de lancement jusqu'à ce que le plugin le ferme. Sinon ne revient pas.
 int apps_launch(const App *a);
+int apps_boot_plugin(void); // le plugin de démarrage (plugin/boot.c) est-il dans la config taiHEN ?
+int apps_reload(void); // fait relancer le launcher par le plugin (après une mise à jour par FTP) ; 0 sans plugin
 void apps_toggle_pin(const char *id);
 int apps_uninstall(const char *id); // < 0 en cas d'échec
