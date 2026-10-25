@@ -33,7 +33,7 @@ target_link_libraries(${PROJECT_NAME}
   SceAVConfig_stub SceNet_stub SceNetCtl_stub ScePromoterUtil_stub
 )
 
-vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME})
+vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)
 vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
   VERSION ${VITA_VERSION}
   NAME ${VITA_APP_NAME}

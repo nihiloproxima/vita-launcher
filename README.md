@@ -20,7 +20,7 @@ Réglages enregistrés dans `ux0:data/vita-launcher/` (épinglées, récentes, c
 
 ## État
 
-En développement. Testé dans l'émulateur [Vita3K](https://vita3k.org), **pas encore sur une vraie console** : le lancement des applis, le volume, l'alimentation, la désinstallation et la police japonaise restent à valider sur le matériel.
+En développement. Tourne sur une vraie PS Vita (PCH-2000, 3.60 HENkaku) : affichage, icônes et jaquettes validés. Le lancement des applis, le volume, l'alimentation, la désinstallation et la police japonaise restent à valider sur le matériel.
 
 ## Prérequis
 

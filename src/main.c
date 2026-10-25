@@ -219,6 +219,9 @@ int main(void) {
 
 		// --- rendu ---
 		vita2d_set_clear_color(RGBA8((int)bg_r, (int)bg_g, (int)bg_b, 255));
+		// vita2d réutilise une seule réserve de sommets à chaque image : sans cette attente, on la réécrit pendant que
+		// le GPU lit encore l'image précédente (triple tampon), ce qui l'a planté sur console (« render gpu crash »).
+		vita2d_wait_rendering_done();
 		vita2d_start_drawing();
 		vita2d_clear_screen();
 
