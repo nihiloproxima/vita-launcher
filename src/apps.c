@@ -19,6 +19,8 @@
 #define DATA_DIR    "ux0:data/vita-launcher"
 #define PINNED_FILE DATA_DIR "/pinned.txt"
 #define RECENT_FILE DATA_DIR "/recent.txt"
+#define LAUNCH_REQUEST DATA_DIR "/launch.txt" // lu par le plugin de démarrage
+#define TAI_CONFIG  "ur0:tai/config.txt"
 #define BLUR_SIZE   16
 
 App apps[MAX_APPS];
@@ -206,10 +208,33 @@ int apps_find(const char *id) {
 	return -1;
 }
 
-// Même séquence que VitaShell : le double appel évite un échec quand le shell n'est pas prêt.
-void apps_launch(const App *a) {
+// Le plugin de démarrage (plugin/boot.c) est-il dans la config taiHEN ?
+// shortcut: une ligne commentée compte aussi, à affiner si ça gêne quelqu'un.
+static int boot_plugin_configured(void) {
+	static char buf[8192];
+	FILE *f = fopen(TAI_CONFIG, "r");
+	if (!f)
+		return 0;
+	size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+	fclose(f);
+	buf[n] = 0;
+	return strstr(buf, "launcher_boot.suprx") != NULL;
+}
+
+int apps_launch(const App *a) {
 	idlist_push_front(&recent, a->id);
 	idlist_save(&recent, RECENT_FILE);
+	// Avec le plugin, c'est le shell qui ferme le launcher puis lance l'appli : pas de confirmation
+	// « fermer l'appli en cours ? » affichée par-dessus l'accueil Sony.
+	if (boot_plugin_configured()) {
+		FILE *f = fopen(LAUNCH_REQUEST, "w");
+		if (f) {
+			fputs(a->id, f);
+			fclose(f);
+			return 1;
+		}
+	}
+	// Sans plugin, même séquence que VitaShell : le double appel évite un échec quand le shell n'est pas prêt.
 	char uri[64];
 	snprintf(uri, sizeof(uri), "psgm:play?titleid=%s", a->id);
 	sceKernelDelayThread(10000);
@@ -217,6 +242,7 @@ void apps_launch(const App *a) {
 	sceKernelDelayThread(10000);
 	sceAppMgrLaunchAppByUri(0xFFFFF, uri);
 	sceKernelExitProcess(0);
+	return 0; // jamais atteint
 }
 
 void apps_toggle_pin(const char *id) {

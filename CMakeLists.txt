@@ -49,6 +49,6 @@ vita_create_vpk(${PROJECT_NAME}.vpk ${VITA_TITLEID} ${PROJECT_NAME}.self
 
 # Plugin SceShell : démarre le launcher au boot et le relance en quittant une appli (voir plugin/boot.c)
 add_executable(launcher_boot plugin/boot.c)
-target_link_libraries(launcher_boot SceAppMgr_stub SceLibKernel_stub SceKernelThreadMgr_stub)
+target_link_libraries(launcher_boot SceAppMgr_stub SceLibKernel_stub SceKernelThreadMgr_stub SceIofilemgr_stub)
 target_link_options(launcher_boot PRIVATE -nostdlib)
 vita_create_self(launcher_boot.suprx launcher_boot CONFIG ${CMAKE_SOURCE_DIR}/plugin/exports.yml UNSAFE)

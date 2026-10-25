@@ -46,7 +46,7 @@ Copier `build/launcher_boot.suprx` dans `ur0:tai/`, puis ajouter cette ligne sou
 ur0:tai/launcher_boot.suprx
 ```
 
-Le plugin attend que l'accueil soit prêt (même méthode qu'[AutoBoot](https://github.com/Rinnegatamante/AutoBoot)), lance le launcher, puis le relance chaque fois qu'une autre appli se ferme. En cas de souci au démarrage : éteindre, rallumer en maintenant L jusqu'à l'accueil (les plugins ne se chargent pas), puis retirer la ligne.
+Le plugin attend que l'accueil soit prêt (même méthode qu'[AutoBoot](https://github.com/Rinnegatamante/AutoBoot)), lance le launcher, puis le relance chaque fois qu'une autre appli se ferme. C'est aussi lui qui lance les applis choisies dans le launcher : il ferme le launcher puis démarre l'appli, ce qui évite la confirmation « fermer l'appli en cours ? » de l'accueil Sony. L'accueil Sony reste visible environ 2 secondes entre les deux : le système ignore les lancements pendant ce temps. En cas de souci au démarrage : éteindre, rallumer en maintenant L jusqu'à l'accueil (les plugins ne se chargent pas), puis retirer la ligne.
 
 ## Aperçu sur Mac avec Vita3K
 

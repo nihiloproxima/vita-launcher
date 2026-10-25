@@ -22,6 +22,7 @@
 #define HINTS_Y    528
 #define BLUR_SIZE  16
 #define ICONS_PER_FRAME 2
+#define LAUNCH_TIMEOUT 300 // images (5 s) : si le plugin ne ferme pas le launcher, on se ferme nous-mêmes
 
 // Dégradé noir de 256 pixels (vertical ou horizontal), étiré à l'écran au rendu.
 static vita2d_texture *make_gradient(int vertical, int alpha_from, int alpha_to) {
@@ -135,7 +136,8 @@ int main(void) {
 
 	int sel = 0, prev_sel = 0;
 	float scroll = 0, fade = 1, text_in = 1;
-	float bg_r = 20, bg_g = 20, bg_b = 26;
+	float bg_r = 20, bg_g = 20, bg_b = 26, launch_t = 0;
+	int launching = -1, launch_frames = 0; // appli en cours de lancement par le plugin
 	Input in = {0};
 
 	while (1) {
@@ -144,12 +146,16 @@ int main(void) {
 		apps_load_icons(ICONS_PER_FRAME);
 
 		// --- entrées : la fiche puis le panneau ont la main tant qu'ils sont visibles ---
-		if (sheet_visible()) {
+		if (launching >= 0) {
+			if (++launch_frames > LAUNCH_TIMEOUT)
+				sceKernelExitProcess(0); // la demande reste dans ux0:data : le plugin la traitera à notre fermeture
+		} else if (sheet_visible()) {
 			char id[16];
 			snprintf(id, sizeof(id), "%s", apps[sel].id);
 			SheetAction action = sheet_update(&in);
 			if (action == SHEET_LAUNCH) {
-				apps_launch(&apps[sel]);
+				if (apps_launch(&apps[sel]))
+					launching = sel;
 			} else if (action == SHEET_PIN) {
 				apps_toggle_pin(id);
 				sel = prev_sel = apps_find(id); // l'ordre a changé : on suit l'appli
@@ -196,8 +202,8 @@ int main(void) {
 				}
 				if (in.pressed & SCE_CTRL_CROSS)
 					launch_index = sel;
-				if (launch_index >= 0)
-					apps_launch(&apps[launch_index]);
+				if (launch_index >= 0 && apps_launch(&apps[launch_index]))
+					launching = launch_index;
 			}
 		}
 
@@ -210,6 +216,7 @@ int main(void) {
 		scroll = approach(scroll, icon_offset(sel), 0.2f);
 		fade = approach(fade, 1, 0.08f);
 		text_in = approach(text_in, 1, 0.15f);
+		launch_t = approach(launch_t, launching >= 0, 0.12f);
 		if (app_count > 0) {
 			App *a = &apps[sel];
 			bg_r = approach(bg_r, a->r * 0.3f, 0.08f);
@@ -267,6 +274,12 @@ int main(void) {
 			panel_draw();
 		if (sheet_visible())
 			sheet_draw();
+		if (launching >= 0) {
+			// l'écran passe au noir pendant que l'icône grossit au centre, jusqu'à ce que le plugin nous ferme
+			float k = ease_out(launch_t), s = ICON_FOCUS * (1 + 0.3f * k);
+			vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, (int)(255 * k)));
+			draw_app_icon(&apps[launching], (SCREEN_W - s) / 2, (SCREEN_H - s) / 2, s, (int)(255 * k));
+		}
 
 		vita2d_end_drawing();
 		vita2d_swap_buffers();
