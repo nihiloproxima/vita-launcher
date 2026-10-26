@@ -4,14 +4,37 @@
 
 #define CORNER_SEGMENTS 6
 
+#define SIZE_RANGES 7
+
 vita2d_font *font_title, *font_body;
 vita2d_pgf *font_cjk;
 
+static const char *const font_files[2] = {"app0:fonts/Inter-SemiBold.ttf", "app0:fonts/Inter-Regular.ttf"};
+static const unsigned int range_max[SIZE_RANGES] = {15, 18, 23, 30, 40, 60, 1000}; // au plus x1,3 d'écart dans une gamme
+static vita2d_font *instances[2][SIZE_RANGES];  // chargées au premier usage ; font_title et font_body servent la gamme 19-23
+
 int ui_init(void) {
-	font_title = vita2d_load_font_file("app0:fonts/Inter-SemiBold.ttf");
-	font_body = vita2d_load_font_file("app0:fonts/Inter-Regular.ttf");
+	font_title = instances[0][2] = vita2d_load_font_file(font_files[0]);
+	font_body = instances[1][2] = vita2d_load_font_file(font_files[1]);
 	font_cjk = vita2d_load_default_pgf();
 	return font_title && font_body ? 0 : -1;
+}
+
+static vita2d_font *sized(vita2d_font *font, unsigned int size) {
+	int f = font == font_body, r = 0;
+	while (r < SIZE_RANGES - 1 && size > range_max[r])
+		r++;
+	if (!instances[f][r])
+		instances[f][r] = vita2d_load_font_file(font_files[f]);
+	return instances[f][r] ? instances[f][r] : font;
+}
+
+void draw_text(vita2d_font *font, float x, float y, unsigned int color, unsigned int size, const char *text) {
+	vita2d_font_draw_text(sized(font, size), (int)x, (int)y, color, size, text);
+}
+
+int text_width(vita2d_font *font, unsigned int size, const char *text) {
+	return vita2d_font_text_width(sized(font, size), size, text);
 }
 
 float approach(float cur, float target, float speed) {
@@ -46,11 +69,11 @@ void draw_round_rect(float x, float y, float w, float h, float r, unsigned int c
 }
 
 void draw_text_right(vita2d_font *font, float right, float y, unsigned int color, unsigned int size, const char *text) {
-	vita2d_font_draw_text(font, (int)(right - vita2d_font_text_width(font, size, text)), (int)y, color, size, text);
+	draw_text(font, (int)(right - text_width(font, size, text)), (int)y, color, size, text);
 }
 
 void draw_text_center(vita2d_font *font, float center, float y, unsigned int color, unsigned int size, const char *text) {
-	vita2d_font_draw_text(font, (int)(center - vita2d_font_text_width(font, size, text) / 2), (int)y, color, size, text);
+	draw_text(font, (int)(center - text_width(font, size, text) / 2), (int)y, color, size, text);
 }
 
 void draw_wifi(float x, float y, int connected, int percent, float alpha) {
@@ -85,7 +108,7 @@ void draw_text_any(vita2d_font *font, float x, float y, unsigned int color, unsi
 	if (font_cjk && has_cjk(text))
 		vita2d_pgf_draw_text(font_cjk, (int)x, (int)y, color, size / 18.0f, text);
 	else
-		vita2d_font_draw_text(font, (int)x, (int)y, color, size, text);
+		draw_text(font, (int)x, (int)y, color, size, text);
 }
 
 static void draw_line(float x0, float y0, float x1, float y1, float width, unsigned int color) {
@@ -126,8 +149,8 @@ void draw_glyph(Glyph glyph, float cx, float cy, float alpha) {
 }
 
 float draw_hint(Glyph glyph, const char *label, float right, float baseline, float alpha) {
-	float text_x = right - vita2d_font_text_width(font_body, 17, label);
-	vita2d_font_draw_text(font_body, (int)text_x, (int)baseline, WHITE(210 * alpha), 17, label);
+	float text_x = right - text_width(font_body, 17, label);
+	draw_text(font_body, (int)text_x, (int)baseline, WHITE(210 * alpha), 17, label);
 	draw_glyph(glyph, text_x - 18, baseline - 6, alpha);
 	return text_x - 30;
 }

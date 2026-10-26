@@ -17,6 +17,11 @@ extern vita2d_pgf *font_cjk; // police système (japonais, chinois, coréen), NU
 
 int ui_init(void); // charge les polices ; -1 si elles manquent
 float approach(float cur, float target, float speed);
+
+// vita2d_font_draw_text et vita2d_font_text_width, par une instance de la police propre à la gamme de tailles : vita2d
+// garde chaque glyphe à la taille de son premier tracé et l'étire ensuite (le « R » de 13 px flou dans un titre de 44 px).
+void draw_text(vita2d_font *font, float x, float y, unsigned int color, unsigned int size, const char *text);
+int text_width(vita2d_font *font, unsigned int size, const char *text);
 float ease_out(float t);
 
 // Polygone unique (éventail de triangles) : la transparence reste uniforme, sans chevauchement.

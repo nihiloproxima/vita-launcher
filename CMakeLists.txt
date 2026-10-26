@@ -20,7 +20,7 @@ set(VITA_MKSFOEX_FLAGS "${VITA_MKSFOEX_FLAGS} -d PARENTAL_LEVEL=1")
 
 add_executable(${PROJECT_NAME}
   src/main.c src/apps.c src/covers.c src/idlist.c src/input.c src/panel.c
-  src/sfo.c src/sheet.c src/sys.c src/ui.c src/ftp.c
+  src/sfo.c src/sheet.c src/sound.c src/sys.c src/ui.c src/ftp.c
   third_party/ftpvita/ftpvita.c
 )
 target_include_directories(${PROJECT_NAME} PRIVATE third_party/ftpvita)
@@ -34,7 +34,7 @@ target_link_libraries(${PROJECT_NAME}
   SceDisplay_stub SceGxm_stub SceSysmodule_stub SceCommonDialog_stub
   SceCtrl_stub SceTouch_stub SceAppMgr_stub SceAppUtil_stub
   ScePower_stub SceRtc_stub ScePgf_stub ScePvf_stub
-  SceAVConfig_stub SceNet_stub SceNetCtl_stub ScePromoterUtil_stub
+  SceAVConfig_stub SceNet_stub SceNetCtl_stub ScePromoterUtil_stub SceAudio_stub SceMotion_stub
 )
 
 vita_create_self(${PROJECT_NAME}.self ${PROJECT_NAME} UNSAFE)

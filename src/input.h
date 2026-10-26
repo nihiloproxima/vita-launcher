@@ -9,6 +9,7 @@ typedef struct {
 	int x0, y0;             // position au moment du contact
 	int tap;                // doigt relevé sans avoir bougé (position : x, y)
 	int swipe_x, swipe_y;   // doigt relevé après un glissé : déplacement total, sinon 0
+	float tilt_x, tilt_y;   // inclinaison récente de la console (en g), revient à 0 quand on la tient immobile
 } Input;
 
 void input_init(void);

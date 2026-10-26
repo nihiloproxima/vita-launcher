@@ -1,6 +1,7 @@
 #include "panel.h"
 
 #include "ftp.h"
+#include "sound.h"
 #include "sys.h"
 #include "ui.h"
 
@@ -17,11 +18,11 @@
 #define TILES_Y   204
 #define TILE_H    64
 #define TILE_GAP  12
-#define TILE_COUNT 6
+#define TILE_COUNT 7
 #define CONFIRM_FRAMES 180
 
-enum { TILE_WIFI, TILE_SETTINGS, TILE_FTP, TILE_SUSPEND, TILE_REBOOT, TILE_POWEROFF };
-static const char *tile_labels[TILE_COUNT] = {"Wi-Fi", "Paramètres", "FTP", "Veille", "Redémarrer", "Éteindre"};
+enum { TILE_WIFI, TILE_SETTINGS, TILE_FTP, TILE_SOUND, TILE_SUSPEND, TILE_REBOOT, TILE_POWEROFF };
+static const char *tile_labels[TILE_COUNT] = {"Wi-Fi", "Paramètres", "FTP", "Sons", "Veille", "Redémarrer", "Éteindre"};
 static const char *days[] = {"dimanche", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi"};
 static const char *months[] = {"janvier", "février", "mars", "avril", "mai", "juin", "juillet",
 	"août", "septembre", "octobre", "novembre", "décembre"};
@@ -42,6 +43,7 @@ void panel_open(void) {
 	open = 1;
 	row = 1;
 	confirm = -1;
+	sound_play(SOUND_OPEN);
 }
 
 int panel_visible(void) {
@@ -59,6 +61,9 @@ static void activate(int tile) {
 	case TILE_FTP:
 		ftp_toggle();
 		break;
+	case TILE_SOUND:
+		sound_toggle();
+		break;
 	case TILE_SUSPEND:
 		sys_suspend();
 		break;
@@ -68,6 +73,7 @@ static void activate(int tile) {
 		if (confirm != tile) {
 			confirm = tile;
 			confirm_timer = CONFIRM_FRAMES;
+			sound_play(SOUND_OPEN);
 		} else if (tile == TILE_REBOOT) {
 			sys_reboot();
 		} else {
@@ -88,19 +94,25 @@ void panel_update(const Input *in) {
 
 	if ((in->pressed & (SCE_CTRL_TRIANGLE | SCE_CTRL_CIRCLE)) || in->swipe_y < -60) {
 		open = 0;
+		sound_play(SOUND_CLOSE);
 		return;
 	}
 	if (in->dy) {
+		if (row != (in->dy < 0 ? 0 : 1))
+			sound_play(SOUND_MOVE);
 		row = in->dy < 0 ? 0 : 1;
 		confirm = -1;
 	}
 	if (in->dx) {
+		int old_volume = sys.volume, old_col = col;
 		if (row == 0) {
 			sys_set_volume(sys.volume + in->dx);
 		} else {
 			col = col + in->dx < 0 ? 0 : col + in->dx >= TILE_COUNT ? TILE_COUNT - 1 : col + in->dx;
 			confirm = -1;
 		}
+		if (sys.volume != old_volume || col != old_col)
+			sound_play(SOUND_MOVE); // au nouveau volume : on entend le réglage
 	}
 	if (row == 1 && (in->pressed & SCE_CTRL_CROSS))
 		activate(col);
@@ -112,12 +124,15 @@ void panel_update(const Input *in) {
 		row = 0;
 		float k = (in->x - bar_x()) / bar_w();
 		int volume = (int)(SYS_VOLUME_MAX * (k < 0 ? 0 : k > 1 ? 1 : k) + 0.5f);
-		if (volume != sys.volume)
+		if (volume != sys.volume) {
 			sys_set_volume(volume);
+			sound_play(SOUND_MOVE);
+		}
 	}
 	if (in->tap) {
 		if (in->y > py + PANEL_H) {
 			open = 0;
+			sound_play(SOUND_CLOSE);
 		} else if (in->y >= py + TILES_Y && in->y <= py + TILES_Y + TILE_H) {
 			for (int i = 0; i < TILE_COUNT; i++) {
 				if (in->x >= tile_x(i) && in->x <= tile_x(i) + tile_w()) {
@@ -135,15 +150,15 @@ static void draw_header(float py) {
 	sceRtcGetCurrentClockLocalTime(&now);
 	char buf[64];
 	snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
-	vita2d_font_draw_text(font_title, PANEL_X + PAD, py + 68, WHITE(255), 44, buf);
+	draw_text(font_title, PANEL_X + PAD, py + 68, WHITE(255), 44, buf);
 	int dow = sceRtcGetDayOfWeek(now.year, now.month, now.day);
 	snprintf(buf, sizeof(buf), "%s %d %s", days[dow % 7], now.day, months[(now.month + 11) % 12]);
-	vita2d_font_draw_text(font_body, PANEL_X + PAD, py + 100, WHITE(170), 18, buf);
+	draw_text(font_body, PANEL_X + PAD, py + 100, WHITE(170), 18, buf);
 
 	float right = PANEL_X + PANEL_W - PAD;
 	const char *network = !sys.wifi ? "Wi-Fi déconnecté" : sys.ssid[0] ? sys.ssid : "Connecté";
 	draw_text_right(font_body, right, py + 60, WHITE(230), 18, network);
-	draw_wifi(right - vita2d_font_text_width(font_body, 18, network) - 30, py + 59, sys.wifi, sys.wifi_signal, 1);
+	draw_wifi(right - text_width(font_body, 18, network) - 30, py + 59, sys.wifi, sys.wifi_signal, 1);
 
 	if (sys.charging)
 		snprintf(buf, sizeof(buf), "%d %% · en charge", sys.battery);
@@ -152,13 +167,13 @@ static void draw_header(float py) {
 	else
 		snprintf(buf, sizeof(buf), "%d %%", sys.battery);
 	draw_text_right(font_body, right, py + 94, WHITE(230), 18, buf);
-	draw_battery(right - vita2d_font_text_width(font_body, 18, buf) - 38, py + 81, sys.battery, sys.charging, 1);
+	draw_battery(right - text_width(font_body, 18, buf) - 38, py + 81, sys.battery, sys.charging, 1);
 }
 
 static void draw_volume(float py) {
 	float cy = py + VOLUME_CY, f = row_focus[0];
 	draw_round_rect(PANEL_X + 16, cy - 28, PANEL_W - 32, 56, 16, WHITE(16 * f));
-	vita2d_font_draw_text(font_title, PANEL_X + PAD, cy + 7, WHITE(170 + 85 * f), 20, "Volume");
+	draw_text(font_title, PANEL_X + PAD, cy + 7, WHITE(170 + 85 * f), 20, "Volume");
 
 	float k = sys.volume < 0 ? 0 : (float)sys.volume / SYS_VOLUME_MAX;
 	draw_round_rect(bar_x(), cy - 3, bar_w(), 6, 3, WHITE(50));
@@ -188,11 +203,12 @@ static void draw_tiles(float py) {
 		if (i == TILE_FTP && ftp_enabled() && confirm != i) {
 			// pastille verte quand le serveur tourne, orange tant qu'il attend le Wi-Fi
 			const char *label = ftp_running() ? "FTP activé" : "FTP…";
-			float left = x + (w - vita2d_font_text_width(font_title, 17, label) - 14) / 2;
+			float left = x + (w - text_width(font_title, 17, label) - 14) / 2;
 			vita2d_draw_fill_circle(left + 4, y + TILE_H / 2, 4, ftp_running() ? RGBA8(90, 210, 120, 255) : RGBA8(240, 170, 60, 255));
-			vita2d_font_draw_text(font_title, (int)(left + 14), (int)(y + TILE_H / 2 + 6), fg, 17, label);
+			draw_text(font_title, (int)(left + 14), (int)(y + TILE_H / 2 + 6), fg, 17, label);
 		} else {
-			draw_text_center(font_title, x + w / 2, y + TILE_H / 2 + 6, fg, 17, confirm == i ? "Confirmer ?" : tile_labels[i]);
+			const char *label = confirm == i ? "Confirmer ?" : i == TILE_SOUND && !sound_enabled() ? "Sons coupés" : tile_labels[i];
+			draw_text_center(font_title, x + w / 2, y + TILE_H / 2 + 6, fg, 17, label);
 		}
 	}
 }

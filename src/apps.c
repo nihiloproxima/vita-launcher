@@ -256,6 +256,24 @@ static int exists(const char *path) {
 	return sceIoGetstat(path, &st) >= 0;
 }
 
+// pic0.png (960x544) puis fond de la LiveArea (840x500), lisibles dans ux0:app pour les homebrews et les bulles
+// d'Adrenaline ; chiffrés pour les jeux du commerce, que vita2d refuse dès l'en-tête.
+vita2d_texture *apps_load_hero(const App *a) {
+	static const char *const files[] = {"pic0.png", "livearea/contents/bg.png"};
+	if (a->path[0])
+		return NULL;
+	for (int i = 0; i < 2; i++) {
+		char path[96];
+		snprintf(path, sizeof(path), "ux0:app/%.9s/sce_sys/%s", a->id, files[i]);
+		vita2d_texture *t = exists(path) ? vita2d_load_PNG_file(path) : NULL;
+		if (t) {
+			vita2d_texture_set_filters(t, SCE_GXM_TEXTURE_FILTER_LINEAR, SCE_GXM_TEXTURE_FILTER_LINEAR);
+			return t;
+		}
+	}
+	return NULL;
+}
+
 // Identifiant d'une ROM : lettre du système et empreinte FNV-1a du nom de fichier, en minuscules comme aucun title ID.
 static void rom_id(char id[16], char prefix, const char *name) {
 	uint32_t h = 2166136261u;

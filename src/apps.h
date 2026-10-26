@@ -36,6 +36,7 @@ void apps_scan(void);
 const char *apps_kind(const App *a); // « Jeu PS Vita », « Game Boy Advance »…
 const char *apps_last_launched(void); // id de la dernière appli lancée, NULL si aucune
 int apps_load_icons(int budget); // charge jusqu'à `budget` icônes et intègre les jaquettes arrivées
+vita2d_texture *apps_load_hero(const App *a); // grande image de fond (homebrews, bulles PSP), NULL sinon
 int apps_find(const char *id);   // index, ou -1
 // Mémorise dans les récentes puis lance. Avec le plugin de démarrage, renvoie 1 : le launcher affiche
 // son animation de lancement jusqu'à ce que le plugin le ferme. Sinon ne revient pas.

@@ -8,12 +8,14 @@
 #include "input.h"
 #include "panel.h"
 #include "sheet.h"
+#include "sound.h"
 #include "sys.h"
 #include "ui.h"
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #define ICON_BASE  104.0f
 #define ICON_FOCUS 148.0f
@@ -26,6 +28,14 @@
 #define BLUR_SIZE  16
 #define ICONS_PER_FRAME 2
 #define LAUNCH_TIMEOUT 300 // images (5 s) : si le plugin ne ferme pas le launcher, on se ferme nous-mêmes
+#define HERO_DELAY     20  // images sur la même appli avant de charger sa grande image : pas pendant un défilement
+#define HERO_MARGIN    40  // marge de la grande image hors de l'écran, décalage maximal du fond
+#define PARALLAX       120 // décalage du fond (px) par g d'inclinaison
+#define IDLE_FRAMES    3600 // une minute sans rien toucher : écran de veille
+
+static vita2d_texture *shade_v, *shade_h;
+static vita2d_texture *hero; // grande image de l'appli hero_id (homebrews), NULL si elle n'en a pas
+static char hero_id[16];
 
 // Dégradé noir de 256 pixels (vertical ou horizontal), étiré à l'écran au rendu.
 static vita2d_texture *make_gradient(int vertical, int alpha_from, int alpha_to) {
@@ -75,11 +85,44 @@ static float icon_offset(int from, int index) {
 	return x;
 }
 
-static void draw_blur(const App *a, float alpha) {
+static void draw_blur(const App *a, float alpha, float dx, float dy) {
 	if (!a->blur || alpha <= 0.01f)
 		return;
 	float scale = 1400.0f / BLUR_SIZE;
-	vita2d_draw_texture_tint_scale(a->blur, -220, -760, scale, scale, RGBA8(170, 170, 170, (int)(120 * alpha * a->appear)));
+	vita2d_draw_texture_tint_scale(a->blur, -220 + dx, -760 + dy, scale, scale, RGBA8(170, 170, 170, (int)(120 * alpha * a->appear)));
+}
+
+// Couvre l'écran avec HERO_MARGIN de rab de chaque côté : un décalage jusqu'à la marge ne découvre pas de bord.
+static void draw_hero(float alpha, float dx, float dy) {
+	float w = vita2d_texture_get_width(hero), h = vita2d_texture_get_height(hero);
+	float k = fmaxf((SCREEN_W + 2 * HERO_MARGIN) / w, (SCREEN_H + 2 * HERO_MARGIN) / h);
+	vita2d_draw_texture_tint_scale(hero, (SCREEN_W - w * k) / 2 + dx, (SCREEN_H - h * k) / 2 + dy, k, k, RGBA8(210, 210, 210, alpha8(255 * alpha)));
+}
+
+// Couleur dominante, icône floue (fondu depuis la sélection précédente), grande image, puis les dégradés qui
+// assombrissent le haut, le bas et la gauche pour le texte. Redessiné par-dessus l'interface, il l'efface (veille).
+static void draw_backdrop(const App *cur, const App *prev, float fade, float hero_t, float dx, float dy, unsigned int bg, float alpha) {
+	vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, (bg & 0x00FFFFFF) | (unsigned int)alpha8(255 * alpha) << 24);
+	if (prev)
+		draw_blur(prev, (1 - fade) * alpha, dx, dy);
+	if (cur)
+		draw_blur(cur, fade * alpha, dx, dy);
+	if (hero && hero_t > 0.01f)
+		draw_hero(hero_t * alpha, dx, dy);
+	vita2d_draw_texture_tint_scale(shade_v, 0, 0, SCREEN_W, SCREEN_H / 256.0f, WHITE(255 * alpha));
+	vita2d_draw_texture_tint_scale(shade_h, 0, 0, SCREEN_W * 0.7f / 256.0f, SCREEN_H, WHITE(255 * alpha));
+}
+
+// Heure de l'écran de veille : elle se promène lentement pour ne pas marquer l'écran OLED des PCH-1000.
+static void draw_ambient_clock(float alpha, int frame) {
+	SceDateTime now;
+	sceRtcGetCurrentClockLocalTime(&now);
+	char buf[16];
+	snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
+	float w = text_width(font_title, 96, buf);
+	float x = MARGIN_X + (SCREEN_W - 2 * MARGIN_X - w) * (0.5f + 0.5f * sinf(frame * 0.0011f));
+	float y = 160 + 300 * (0.5f + 0.5f * sinf(frame * 0.0007f + 1));
+	draw_text(font_title, (int)x, (int)y, WHITE(200 * alpha), 96, buf);
 }
 
 // Barre du haut : heure à gauche ; Wi-Fi, batterie et pourcentage à droite.
@@ -88,15 +131,15 @@ static void draw_status_bar(void) {
 	sceRtcGetCurrentClockLocalTime(&now);
 	char buf[32];
 	snprintf(buf, sizeof(buf), "%02d:%02d", now.hour, now.minute);
-	vita2d_font_draw_text(font_title, MARGIN_X, 52, WHITE(230), 22, buf);
+	draw_text(font_title, MARGIN_X, 52, WHITE(230), 22, buf);
 	if (ftp_running()) {
-		float x = MARGIN_X + vita2d_font_text_width(font_title, 22, buf) + 20;
+		float x = MARGIN_X + text_width(font_title, 22, buf) + 20;
 		vita2d_draw_fill_circle(x + 4, 45, 4, RGBA8(90, 210, 120, 255));
-		vita2d_font_draw_text(font_body, x + 16, 52, WHITE(190), 18, ftp_address());
+		draw_text(font_body, x + 16, 52, WHITE(190), 18, ftp_address());
 	}
 	snprintf(buf, sizeof(buf), "%d %%", sys.battery);
-	float right = SCREEN_W - MARGIN_X, text_x = right - vita2d_font_text_width(font_body, 20, buf);
-	vita2d_font_draw_text(font_body, text_x, 52, WHITE(210), 20, buf);
+	float right = SCREEN_W - MARGIN_X, text_x = right - text_width(font_body, 20, buf);
+	draw_text(font_body, text_x, 52, WHITE(210), 20, buf);
 	draw_battery(text_x - 36, 38, sys.battery, sys.charging, 0.9f);
 	draw_wifi(text_x - 66, 51, sys.wifi, sys.wifi_signal, 0.9f);
 }
@@ -114,7 +157,7 @@ static const char *const TAB_NAMES[TAB_COUNT] = {"Jeux", "Applis"};
 static float tab_x(int tab) {
 	float x = MARGIN_X + 36; // après la pastille L
 	for (int t = 0; t < tab; t++)
-		x += vita2d_font_text_width(font_title, 26, TAB_NAMES[t]) + 28;
+		x += text_width(font_title, 26, TAB_NAMES[t]) + 28;
 	return x;
 }
 
@@ -127,7 +170,7 @@ static void draw_trigger(float x, const char *label) {
 static void draw_tabs(int tab) {
 	draw_trigger(MARGIN_X, "L");
 	for (int t = 0; t < TAB_COUNT; t++)
-		vita2d_font_draw_text(font_title, tab_x(t), TABS_Y, WHITE(t == tab ? 255 : 110), 26, TAB_NAMES[t]);
+		draw_text(font_title, tab_x(t), TABS_Y, WHITE(t == tab ? 255 : 110), 26, TAB_NAMES[t]);
 	draw_trigger(tab_x(TAB_COUNT) - 18, "R");
 }
 
@@ -183,10 +226,11 @@ int main(void) {
 	if (ui_init() < 0)
 		sceKernelExitProcess(0);
 	sys_init();
+	sound_init();
 	ftp_init();
 	covers_init();
-	vita2d_texture *shade_v = make_gradient(1, 50, 245);
-	vita2d_texture *shade_h = make_gradient(0, 150, 0);
+	shade_v = make_gradient(1, 50, 245);
+	shade_h = make_gradient(0, 150, 0);
 	vita2d_texture *shadow = make_shadow();
 
 	apps_scan();
@@ -208,10 +252,25 @@ int main(void) {
 	float scroll = 0, fade = 1, text_in = 1;
 	float bg_r = 20, bg_g = 20, bg_b = 26, launch_t = 0;
 	int launching = -1, launch_frames = 0; // appli en cours de lancement par le plugin
+	int frame = 0, idle = 0, waking = 0, settle = 0, hero_tried = 0;
+	float ambient = 0, hero_t = 0; // ambient : écran de veille, 0 -> 1
+	char settle_id[16] = ""; // appli sélectionnée depuis settle images
 	Input in = {0};
 
 	while (1) {
+		frame++;
 		input_read(&in);
+		// écran de veille : la première entrée, jusqu'à son relâchement, ne fait que réveiller
+		int active = (in.held & 0xFFFF) || in.touching || in.dx || in.dy || in.tap || in.swipe_x || in.swipe_y;
+		idle = active ? 0 : idle + 1;
+		if (active && ambient > 0.05f)
+			waking = 1;
+		if (waking) {
+			waking = active;
+			in.pressed = 0;
+			in.dx = in.dy = in.tap = in.swipe_x = in.swipe_y = 0;
+			in.touching = 0; // et au relâchement, input_read ne verra ni toucher ni glissé
+		}
 		sys_poll();
 		ftp_poll(sys.wifi);
 		apps_load_icons(ICONS_PER_FRAME);
@@ -225,6 +284,7 @@ int main(void) {
 			snprintf(id, sizeof(id), "%s", apps[sel].id);
 			SheetAction action = sheet_update(&in);
 			if (action == SHEET_LAUNCH) {
+				sound_play(SOUND_LAUNCH);
 				if (apps_launch(&apps[sel]))
 					launching = sel;
 			} else if (action == SHEET_PIN) {
@@ -249,6 +309,7 @@ int main(void) {
 						new_tab = t;
 			}
 			if (new_tab != tab) {
+				sound_play(SOUND_MOVE);
 				tab = new_tab;
 				tab_range(tab, &lo, &hi);
 				sel = prev_sel = target = lo;
@@ -276,6 +337,7 @@ int main(void) {
 			if (hi > lo) {
 				target = target < lo ? lo : target > hi - 1 ? hi - 1 : target;
 				if (target != sel) {
+					sound_play(SOUND_MOVE);
 					prev_sel = sel;
 					sel = target;
 					fade = 0;
@@ -283,8 +345,11 @@ int main(void) {
 				}
 				if (in.pressed & SCE_CTRL_CROSS)
 					launch_index = sel;
-				if (launch_index >= 0 && apps_launch(&apps[launch_index]))
-					launching = launch_index;
+				if (launch_index >= 0) {
+					sound_play(SOUND_LAUNCH);
+					if (apps_launch(&apps[launch_index]))
+						launching = launch_index;
+				}
 			}
 		}
 
@@ -303,6 +368,7 @@ int main(void) {
 		fade = approach(fade, 1, 0.08f);
 		text_in = approach(text_in, 1, 0.15f);
 		launch_t = approach(launch_t, launching >= 0, 0.12f);
+		ambient = approach(ambient, idle > IDLE_FRAMES && launching < 0, idle > IDLE_FRAMES ? 0.01f : 0.2f);
 		if (hi > lo) {
 			App *a = &apps[sel];
 			bg_r = approach(bg_r, a->r * 0.3f, 0.08f);
@@ -311,27 +377,47 @@ int main(void) {
 		}
 
 		// --- rendu ---
-		vita2d_set_clear_color(RGBA8((int)bg_r, (int)bg_g, (int)bg_b, 255));
 		// vita2d réutilise une seule réserve de sommets à chaque image : sans cette attente, on la réécrit pendant que
 		// le GPU lit encore l'image précédente (triple tampon), ce qui l'a planté sur console (« render gpu crash »).
 		vita2d_wait_rendering_done();
+
+		// grande image : chargée une fois la sélection posée (un PNG plein écran se décode en plusieurs images),
+		// libérée après son fondu, ici où le GPU a fini de la lire
+		const char *cur_id = hi > lo ? apps[sel].id : "";
+		if (strcmp(settle_id, cur_id) != 0) {
+			snprintf(settle_id, sizeof(settle_id), "%s", cur_id);
+			settle = hero_tried = 0;
+		}
+		settle++;
+		int hero_wanted = hero && strcmp(hero_id, cur_id) == 0;
+		hero_t = approach(hero_t, hero_wanted, hero_wanted ? 0.08f : 0.15f);
+		if (hero && !hero_wanted && hero_t < 0.01f) {
+			vita2d_free_texture(hero);
+			hero = NULL;
+		}
+		if (!hero && !hero_tried && hi > lo && settle > HERO_DELAY && launching < 0) {
+			hero_tried = 1;
+			if ((hero = apps_load_hero(&apps[sel])))
+				snprintf(hero_id, sizeof(hero_id), "%s", cur_id);
+		}
+
 		vita2d_start_drawing();
 		vita2d_clear_screen();
 
-		if (hi > lo) {
-			if (prev_sel != sel && prev_sel < app_count)
-				draw_blur(&apps[prev_sel], 1 - fade);
-			draw_blur(&apps[sel], fade);
-		}
-		vita2d_draw_texture_scale(shade_v, 0, 0, SCREEN_W, SCREEN_H / 256.0f);
-		vita2d_draw_texture_scale(shade_h, 0, 0, SCREEN_W * 0.7f / 256.0f, SCREEN_H);
+		// le fond suit l'inclinaison de la console et dérive lentement pendant la veille
+		float off_x = fmaxf(fminf(-in.tilt_x * PARALLAX + ambient * 30 * sinf(frame * 0.004f), HERO_MARGIN), -HERO_MARGIN);
+		float off_y = fmaxf(fminf(in.tilt_y * PARALLAX + ambient * 18 * cosf(frame * 0.003f), HERO_MARGIN), -HERO_MARGIN);
+		const App *cur = hi > lo ? &apps[sel] : NULL;
+		const App *prev = cur && prev_sel != sel && prev_sel < app_count ? &apps[prev_sel] : NULL;
+		unsigned int bg = RGBA8((int)bg_r, (int)bg_g, (int)bg_b, 255);
+		draw_backdrop(cur, prev, fade, hero_t, off_x, off_y, bg, 1);
 		draw_status_bar();
 		draw_tabs(tab);
 
 		if (hi == lo) {
-			vita2d_font_draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, tab == 0 ? "Aucun jeu" : "Aucune appli");
+			draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, tab == 0 ? "Aucun jeu" : "Aucune appli");
 			if (tab == 0)
-				vita2d_font_draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20,
+				draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20,
 					"ROMs GBA et PS1 : ux0:roms/gba et ux0:roms/ps1, avec RetroArch installé");
 		} else {
 			App *a = &apps[sel];
@@ -342,7 +428,7 @@ int main(void) {
 			// l'identifiant d'une ROM est le nôtre, sans intérêt à l'écran
 			snprintf(buf, sizeof(buf), "%s%s%s%s%s", a->pinned ? "Épinglée  ·  " : "", apps_kind(a), a->path[0] ? "" : "  ·  ",
 				a->path[0] ? "" : a->id, played);
-			vita2d_font_draw_text(font_body, MARGIN_X, TITLE_Y + 36 + slide, WHITE(170 * text_in), 20, buf);
+			draw_text(font_body, MARGIN_X, TITLE_Y + 36 + slide, WHITE(170 * text_in), 20, buf);
 
 			for (int i = lo; i < hi; i++) {
 				App *ai = &apps[i];
@@ -367,6 +453,11 @@ int main(void) {
 			panel_draw();
 		if (sheet_visible())
 			sheet_draw();
+		if (ambient > 0.01f) {
+			draw_backdrop(cur, prev, fade, hero_t, off_x, off_y, bg, ambient);
+			vita2d_draw_rectangle(0, 0, SCREEN_W, SCREEN_H, RGBA8(0, 0, 0, alpha8(90 * ambient)));
+			draw_ambient_clock(ambient, frame);
+		}
 		if (launching >= 0) {
 			// l'écran passe au noir pendant que l'icône grossit au centre, jusqu'à ce que le plugin nous ferme
 			float k = ease_out(launch_t), s = ICON_FOCUS * (1 + 0.3f * k);

@@ -1,5 +1,6 @@
 #include "sheet.h"
 
+#include "sound.h"
 #include "ui.h"
 
 #include <psp2/ctrl.h>
@@ -26,6 +27,7 @@ void sheet_open(const App *a) {
 	open = 1;
 	row = 0;
 	confirm = 0;
+	sound_play(SOUND_OPEN);
 }
 
 int sheet_visible(void) {
@@ -43,9 +45,12 @@ static const char *row_label(int i) {
 static SheetAction activate(int i) {
 	if (i == 2 && !confirm) {
 		confirm = 1; // désinstaller est irréversible : second appui
+		sound_play(SOUND_OPEN);
 		return SHEET_NONE;
 	}
 	open = 0;
+	if (i != 0)
+		sound_play(SOUND_CLOSE); // lancer : son de lancement joué par l'accueil
 	t = 0; // fermeture immédiate : après une désinstallation, l'icône copiée n'existe plus
 	return i == 0 ? SHEET_LAUNCH : i == 1 ? SHEET_PIN : SHEET_UNINSTALL;
 }
@@ -56,11 +61,15 @@ SheetAction sheet_update(const Input *in) {
 		return SHEET_NONE;
 	if (in->pressed & (SCE_CTRL_CIRCLE | SCE_CTRL_SQUARE)) {
 		open = 0;
+		sound_play(SOUND_CLOSE);
 		return SHEET_NONE;
 	}
 	if (in->dy) {
+		int old_row = row;
 		row = row + in->dy < 0 ? 0 : row + in->dy >= row_count() ? row_count() - 1 : row + in->dy;
 		confirm = 0;
+		if (row != old_row)
+			sound_play(SOUND_MOVE);
 	}
 	if (in->pressed & SCE_CTRL_CROSS)
 		return activate(row);
@@ -68,6 +77,7 @@ SheetAction sheet_update(const Input *in) {
 		float x = card_x(), y = card_y();
 		if (in->x < x || in->x > x + CARD_W || in->y < y || in->y > y + CARD_H) {
 			open = 0;
+			sound_play(SOUND_CLOSE);
 			return SHEET_NONE;
 		}
 		int i = (int)((in->y - y - ROWS_Y) / ROW_H);
@@ -98,7 +108,7 @@ void sheet_draw(void) {
 		snprintf(buf, sizeof(buf), "%s", apps_kind(&app));
 	else
 		snprintf(buf, sizeof(buf), "%s  ·  %s%s%s", apps_kind(&app), app.id, app.version[0] ? "  ·  v" : "", app.version);
-	vita2d_font_draw_text(font_body, x + 144, y + 100, WHITE(160 * a), 17, buf);
+	draw_text(font_body, x + 144, y + 100, WHITE(160 * a), 17, buf);
 
 	for (int i = 0; i < row_count(); i++) {
 		float ry = y + ROWS_Y + i * ROW_H;
@@ -109,6 +119,6 @@ void sheet_draw(void) {
 			fg = danger && confirm ? WHITE(255 * a) : danger ? RGBA8(200, 50, 40, (int)(255 * a)) : RGBA8(18, 18, 24, (int)(255 * a));
 			draw_round_rect(x + 20, ry + 4, CARD_W - 40, ROW_H - 8, 14, bg);
 		}
-		vita2d_font_draw_text(font_title, x + 40, ry + ROW_H / 2 + 7, fg, 19, row_label(i));
+		draw_text(font_title, x + 40, ry + ROW_H / 2 + 7, fg, 19, row_label(i));
 	}
 }

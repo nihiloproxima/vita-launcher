@@ -6,7 +6,8 @@ cd "$(dirname "$0")/.."
 export VITASDK=${VITASDK:-$HOME/vitasdk} PATH=$HOME/vitasdk/bin:$PATH
 DEFS=""
 case "$1" in panel) DEFS="-DPREVIEW_PANEL"; shift ;; sheet) DEFS="-DPREVIEW_SHEET"; shift ;; esac
-cmake -S . -B build-preview -DCMAKE_C_FLAGS="$DEFS" >/dev/null && cmake --build build-preview >/dev/null
+# Release comme le VPK installé : sans type de build, vita-elf-create peut échouer (« segment 1 overlaps »)
+cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$DEFS" >/dev/null && cmake --build build-preview >/dev/null
 FS="$HOME/Library/Application Support/Vita3K/Vita3K/fs/ux0"
 mkdir -p "$FS" && rsync -a preview/ux0/ "$FS/"
 # ne ferme que l'instance lancée par ce script (pas un Vita3K ouvert à la main)
