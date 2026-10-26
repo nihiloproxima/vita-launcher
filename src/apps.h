@@ -17,6 +17,7 @@ typedef struct {
 	int pinned;
 	unsigned int played;      // temps de jeu en secondes, noté par le plugin de démarrage
 	unsigned int last_played; // heure locale en secondes de la dernière partie, 0 si jamais jouée
+	unsigned int week;        // temps de jeu des 7 derniers jours en secondes (jeux seulement)
 	IconState icon_state;
 	vita2d_texture *icon; // carré, coins arrondis
 	vita2d_texture *blur; // icône réduite à 16x16 : agrandie avec filtrage linéaire, elle donne un fond flou
@@ -27,6 +28,8 @@ typedef struct {
 
 extern App apps[MAX_APPS];
 extern int app_count;
+extern unsigned int apps_week[7]; // temps de jeu (jeux seulement) par jour des 7 derniers jours, [6] = aujourd'hui
+extern int apps_today;            // jour de la semaine de apps_week[6], 0 = dimanche
 
 static inline int app_tab(const App *a) { return a->kind == KIND_APP; } // 0 = Jeux, 1 = Applis
 

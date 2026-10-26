@@ -11,6 +11,7 @@
 #include <psp2/kernel/processmgr.h>
 #include <psp2/kernel/threadmgr.h>
 #include <psp2/promoterutil.h>
+#include <psp2/rtc.h>
 #include <psp2/sysmodule.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -41,6 +42,8 @@ static const struct {
 
 App apps[MAX_APPS];
 int app_count;
+unsigned int apps_week[7];
+int apps_today;
 static IdList pinned, recent;
 
 // Arrondit les coins (alpha anticrénelé) : icônes carrées, bulles rondes et jaquettes ont la même silhouette.
@@ -235,6 +238,12 @@ static int compare_apps(const void *x, const void *y) {
 
 // Une ligne tronquée (coupure pendant l'écriture) est ignorée, pas le reste du journal.
 static void load_playtime(void) {
+	SceDateTime dt;
+	SceUInt64 now = 0;
+	sceRtcGetCurrentClockLocalTime(&dt);
+	sceRtcGetTime64_t(&dt, &now); // même horloge que le plugin : heure locale en secondes
+	unsigned int today = (unsigned int)(now / 86400);
+	apps_today = (today + 4) % 7; // le 1er janvier 1970 était un jeudi
 	FILE *f = fopen(PLAYTIME_FILE, "r");
 	if (!f)
 		return;
@@ -247,6 +256,12 @@ static void load_playtime(void) {
 		apps[i].played += secs;
 		if (when > apps[i].last_played)
 			apps[i].last_played = when;
+		// une tranche compte pour le jour où elle a été notée ; non signé : une date future est écartée aussi
+		unsigned int ago = today - when / 86400;
+		if (app_tab(&apps[i]) == 0 && ago < 7) {
+			apps[i].week += secs;
+			apps_week[6 - ago] += secs;
+		}
 	}
 	fclose(f);
 }

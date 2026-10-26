@@ -1,11 +1,12 @@
 #!/bin/bash
 # Compile, lance le launcher dans Vita3K avec les applis de preview/ux0, puis capture l'écran dans build-preview/shot.png.
-# usage : tools/preview.sh [panel|sheet] [secondes avant capture, défaut 5]   (démarre avec le panneau rapide ou la fiche ouverte)
+# usage : tools/preview.sh [panel|sheet|week] [secondes avant capture, défaut 5]   (démarre avec le panneau rapide, la fiche
+# ou l'onglet Ta semaine ouvert)
 set -e
 cd "$(dirname "$0")/.."
 export VITASDK=${VITASDK:-$HOME/vitasdk} PATH=$HOME/vitasdk/bin:$PATH
 DEFS=""
-case "$1" in panel) DEFS="-DPREVIEW_PANEL"; shift ;; sheet) DEFS="-DPREVIEW_SHEET"; shift ;; esac
+case "$1" in panel) DEFS="-DPREVIEW_PANEL"; shift ;; sheet) DEFS="-DPREVIEW_SHEET"; shift ;; week) DEFS="-DPREVIEW_WEEK"; shift ;; esac
 # Release comme le VPK installé : sans type de build, vita-elf-create peut échouer (« segment 1 overlaps »)
 cmake -S . -B build-preview -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$DEFS" >/dev/null && cmake --build build-preview >/dev/null
 FS="$HOME/Library/Application Support/Vita3K/Vita3K/fs/ux0"

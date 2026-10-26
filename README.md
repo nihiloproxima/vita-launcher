@@ -31,6 +31,7 @@
 ### Accueil
 
 - **Deux onglets**, Jeux et Applis, chacun avec sa rangée. Les applis épinglées passent en tête, puis les dernières lancées, puis le reste par ordre alphabétique.
+- **Ta semaine** (troisième onglet) : temps de jeu des 7 derniers jours, une barre par jour et le jeu le plus joué. Il faut le plugin de démarrage, qui note le temps de jeu ; un jeu mis en pause par le bouton PS compte encore jusqu'à la mise en veille de la console.
 - **Le fond suit l'appli sélectionnée** : sa couleur dominante et une version floue de son icône, ou sa grande image quand elle est lisible (homebrews et bulles PSP : `pic0.png`, sinon le fond de la LiveArea). Il bouge légèrement quand on incline la console.
 - **Sous le titre** : type, identifiant et temps de jeu, noté par le plugin de démarrage.
 - **Jaquettes** : les jeux dont l'icône est illisible (chiffrée, comme pour les jeux du commerce) reçoivent leur jaquette, téléchargée en arrière-plan depuis [HexFlow-Covers](https://github.com/Andiweli/HexFlow-Covers) et gardée en cache.
@@ -45,7 +46,7 @@
 ### Confort
 
 - **Sons** : petits sons de navigation, d'ouverture et de lancement, synthétisés par le launcher. La tuile Sons du panneau les coupe.
-- **Écran de veille** : après une minute sans rien toucher, l'interface s'efface, le fond dérive lentement et l'heure se promène, pour ne pas marquer l'écran OLED. Le premier appui ne fait que le réveiller.
+- **Écran de veille** : après une minute sans rien toucher, l'interface s'efface, le fond dérive lentement et l'heure se promène, pour ne pas marquer l'écran OLED. L'écran n'est alors redessiné que 15 fois par seconde, pour économiser la batterie. Le premier appui ne fait que le réveiller.
 - **Aucun appui perdu** : un appui bref pendant une image lente, ou gauche puis droite enchaînés sans repasser par le neutre, comptent toujours.
 
 ### Système
@@ -117,6 +118,7 @@ tools/pull-preview.sh 192.168.1.10:1337   # récupère nom et icône des applis 
 tools/preview.sh                          # compile, lance dans Vita3K, capture dans build-preview/shot.png
 tools/preview.sh panel                    # pareil, panneau rapide ouvert
 tools/preview.sh sheet                    # pareil, fiche de la première appli ouverte
+tools/preview.sh week                     # pareil, onglet Ta semaine (lit ux0:data/vita-launcher/playtime.txt de Vita3K)
 tools/preview.sh 80                       # capture après 80 s : écran de veille
 ```
 
@@ -137,7 +139,6 @@ En développement. Tourne sur une vraie PS Vita (PCH-2000, 3.60 HENkaku) : affic
 ### Suite prévue
 
 - Jeux PSP sans bulle (ISO lancés directement dans Adrenaline)
-- Page « Ta semaine » : temps de jeu cumulé, jeu le plus joué
 - Boutique : catalogue VitaDB, installation et mises à jour
 - Bouton PS qui ramène au launcher plutôt qu'à l'accueil Sony
 

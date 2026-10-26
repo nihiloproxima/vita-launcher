@@ -1,4 +1,5 @@
 #include <psp2/ctrl.h>
+#include <psp2/display.h>
 #include <psp2/kernel/processmgr.h>
 #include <psp2/rtc.h>
 #include <vita2d.h>
@@ -24,7 +25,11 @@
 #define TITLE_Y    286
 #define HINTS_Y    528
 #define TABS_Y     112
-#define TAB_COUNT  2
+#define TAB_COUNT  3
+#define TAB_WEEK   2 // Ta semaine : pas une rangée d'applis, aucune appli n'y est triée
+#define WEEK_BASE  460.0f // pied des barres de Ta semaine
+#define WEEK_BAR_W 36.0f
+#define WEEK_BAR_H 110.0f
 #define BLUR_SIZE  16
 #define ICONS_PER_FRAME 2
 #define LAUNCH_TIMEOUT 300 // images (5 s) : si le plugin ne ferme pas le launcher, on se ferme nous-mêmes
@@ -32,6 +37,7 @@
 #define HERO_MARGIN    40  // marge de la grande image hors de l'écran, décalage maximal du fond
 #define PARALLAX       120 // décalage du fond (px) par g d'inclinaison
 #define IDLE_FRAMES    3600 // une minute sans rien toucher : écran de veille
+#define DOZE_VBLANKS   4    // veille installée : une image toutes les 4 (15 par seconde)
 
 static vita2d_texture *shade_v, *shade_h;
 static vita2d_texture *hero; // grande image de l'appli hero_id (homebrews), NULL si elle n'en a pas
@@ -152,7 +158,7 @@ static void tab_range(int tab, int *lo, int *hi) {
 		;
 }
 
-static const char *const TAB_NAMES[TAB_COUNT] = {"Jeux", "Applis"};
+static const char *const TAB_NAMES[TAB_COUNT] = {"Jeux", "Applis", "Ta semaine"};
 
 static float tab_x(int tab) {
 	float x = MARGIN_X + 36; // après la pastille L
@@ -219,6 +225,54 @@ static void draw_app_icon(const App *a, float x, float y, float s, int alpha) {
 	}
 }
 
+// « 35 min », « 4 h 05 »
+static void format_duration(unsigned int secs, char *buf, size_t size) {
+	if (secs < 3600)
+		snprintf(buf, size, "%u min", secs < 60 ? 1 : secs / 60);
+	else
+		snprintf(buf, size, "%u h %02u", secs / 3600, secs / 60 % 60);
+}
+
+// Onglet Ta semaine : temps de jeu des 7 derniers jours, une barre par jour, et le jeu le plus joué.
+static void draw_week(void) {
+	unsigned int total = 0, max = 1;
+	for (int d = 0; d < 7; d++) {
+		total += apps_week[d];
+		max = apps_week[d] > max ? apps_week[d] : max;
+	}
+	if (!total) {
+		draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, "Aucune partie ces 7 derniers jours");
+		draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20, "Le temps de jeu est noté par le plugin de démarrage");
+		return;
+	}
+	char buf[32], title[48];
+	format_duration(total, buf, sizeof(buf));
+	snprintf(title, sizeof(title), "%s de jeu", buf);
+	draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 44, title);
+	draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20, "ces 7 derniers jours");
+
+	for (int d = 0; d < 7; d++) {
+		float h = fmaxf(4, WEEK_BAR_H * apps_week[d] / max), x = MARGIN_X + d * (WEEK_BAR_W + 20);
+		draw_round_rect(x, WEEK_BASE - h, WEEK_BAR_W, h, fminf(6, h / 2), WHITE(d == 6 ? 240 : 90));
+		char day[2] = {"DLMMJVS"[(apps_today + d + 1) % 7], 0}; // d = 6 : aujourd'hui
+		draw_text_center(font_body, x + WEEK_BAR_W / 2, WEEK_BASE + 26, WHITE(d == 6 ? 230 : 140), 16, day);
+	}
+
+	// cherché à chaque image : épingler ou désinstaller déplace les applis dans apps[]
+	const App *top = NULL;
+	for (int i = 0; i < app_count; i++)
+		if (apps[i].week && (!top || apps[i].week > top->week))
+			top = &apps[i];
+	if (top) { // NULL si le seul jeu joué a été désinstallé depuis
+		float x = MARGIN_X + 7 * (WEEK_BAR_W + 20) + 40, tx = x + ICON_BASE + 22;
+		draw_app_icon(top, x, ROW_CY - ICON_BASE / 2, ICON_BASE, 255);
+		draw_text(font_body, tx, ROW_CY - 18, WHITE(150), 18, "Le plus joué");
+		draw_text_any(font_title, tx, ROW_CY + 12, WHITE(255), 24, top->title);
+		format_duration(top->week, buf, sizeof(buf));
+		draw_text(font_body, tx, ROW_CY + 40, WHITE(170), 18, buf);
+	}
+}
+
 int main(void) {
 	vita2d_init();
 	vita2d_set_vblank_wait(1);
@@ -247,6 +301,9 @@ int main(void) {
 	const char *last = apps_last_launched();
 	int last_index = last ? apps_find(last) : -1;
 	int tab = last_index >= 0 ? app_tab(&apps[last_index]) : 0, lo, hi;
+#ifdef PREVIEW_WEEK
+	tab = TAB_WEEK; // aperçu dans Vita3K : tools/preview.sh week
+#endif
 	tab_range(tab, &lo, &hi);
 	int sel = lo, prev_sel = lo;
 	float scroll = 0, fade = 1, text_in = 1;
@@ -414,7 +471,9 @@ int main(void) {
 		draw_status_bar();
 		draw_tabs(tab);
 
-		if (hi == lo) {
+		if (tab == TAB_WEEK) {
+			draw_week();
+		} else if (hi == lo) {
 			draw_text(font_title, MARGIN_X, TITLE_Y, WHITE(255), 36, tab == 0 ? "Aucun jeu" : "Aucune appli");
 			if (tab == 0)
 				draw_text(font_body, MARGIN_X, TITLE_Y + 36, WHITE(170), 20,
@@ -467,6 +526,11 @@ int main(void) {
 
 		vita2d_end_drawing();
 		vita2d_swap_buffers();
+		// veille installée : l'heure et le fond bougent à peine, moins d'images laissent le processeur et le GPU au repos
+		if (ambient > 0.99f) {
+			sceDisplayWaitVblankStartMulti(DOZE_VBLANKS);
+			frame += DOZE_VBLANKS - 1; // en plus du frame++ : la dérive garde sa vitesse
+		}
 	}
 	return 0;
 }
